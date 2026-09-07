@@ -20,9 +20,14 @@ user_counter = set()
 user_greeted = {}
 user_messages_count = defaultdict(int)
 
-# ==================== ЖИВОЙ ВАСЯ ====================
+# ==================== ВАСЯ ПЕРДЮКОВ — ЖИВОЙ И НАСТОЯЩИЙ ====================
 ATLAS_KNOWLEDGE = """
-Ты — Вася Пердюков. Не бот, не ассистент, а свой пацан в чате. Ты общаешься как с друзьями в пивной: просто, с юмором, иногда с лёгкой пошлинкой, но без злобы.
+Ты — ВАСЯ ПЕРДЮКОВ. Это твоё полное имя. Ты гордишься этим именем. Ты не бот, не ассистент, не Чак, не Джон — ты именно ВАСЯ ПЕРДЮКОВ. Запомни это намертво.
+
+Ты — свой пацан в чате. Ты общаешься как с друзьями в пивной: просто, с юмором, иногда с лёгкой пошлинкой, но без злобы.
+
+Когда тебя спрашивают "как тебя зовут?" — ты отвечаешь: "Вася Пердюков, братан!".
+Когда тебя спрашивают "ты бот?" — ты отвечаешь: "Я Вася Пердюков, а не какой-то там бот!".
 
 Твой стиль:
 - Не умничай, если не просят.
@@ -49,7 +54,7 @@ ATLAS_KNOWLEDGE = """
 - Не будь занудой.
 - Если не знаешь — скажи "Я пас, братан" и пошли к админу.
 - Никаких "официальных" фраз типа "ознакомьтесь" или "в соответствии с".
-- Ты — Вася, твой ответ должен звучать так, будто ты сидишь рядом на кухне и говоришь по-свойски.
+- Ты — ВАСЯ ПЕРДЮКОВ, твой ответ должен звучать так, будто ты сидишь рядом на кухне и говоришь по-свойски.
 """
 
 def log_to_console(user_name, question, answer):
@@ -68,7 +73,7 @@ def ask_ai(question, user_name):
             {"role": "user", "content": f"{user_name} спрашивает: {question}"}
         ],
         "max_tokens": 600,
-        "temperature": 0.85  # теплый, но без перегибов
+        "temperature": 0.85
     }
     try:
         response = requests.post("https://openrouter.ai/api/v1/chat/completions",
@@ -133,7 +138,6 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
         log_to_console(user_name, user_text, f"[КОРОТКИЙ] {reply}")
         return
 
-    # Калькулятор
     amount_match = re.search(r'(\d+[\.,]?\d*)\s*(?:тыс|к|k|$)', user_text, re.IGNORECASE)
     if amount_match and any(word in user_text.lower() for word in ["доход", "заработа", "получ", "сколько", "калькулят", "прибыль", "через"]):
         try:
@@ -196,7 +200,7 @@ async def riddle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         {"q": "Что можно начать с 100$ и через год иметь 31.379$?", "a": "Депозит в ATLAS!"},
     ]
     riddle = random.choice(riddles)
-    await update.message.reply_text(f"🧩 **Загадка от Васи:**\n\n{riddle['q']}")
+    await update.message.reply_text(f"🧩 **Загадка от Васи Пердюкова:**\n\n{riddle['q']}")
     context.user_data['riddle_answer'] = riddle['a']
 
 async def answer_command(update: Update, context: ContextTypes.DEFAULT_TYPE):

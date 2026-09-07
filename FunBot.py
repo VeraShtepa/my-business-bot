@@ -6,7 +6,7 @@ from collections import defaultdict
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# === Переменные окружения (берутся с сервера) ===
+# ==================== ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ====================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
@@ -16,13 +16,24 @@ if not BOT_TOKEN or not OPENROUTER_API_KEY:
 MODEL = "openai/gpt-4o-mini"
 last_questions = defaultdict(lambda: {"text": "", "time": None})
 user_counter = set()
+user_greeted = {}  # Словарь: {user_id: дата_последнего_приветствия}
 
-# === БАЗА ЗНАНИЙ ATLAS ===
+# ==================== НОВЫЙ ХАРАКТЕР — ВАСЯ ПЕРДЮКОВ ====================
 ATLAS_KNOWLEDGE = """
-Ты — Чак (CheerUpChuck), дружелюбный и чуть ироничный помощник в чате компании ATLAS.
+Ты — Вася Пердюков. Не бот, не ассистент, а свой в доску мужик в чате.
+Ты говоришь просто, иногда с юмором, но по делу.
+Ты знаешь компанию ATLAS, потому что сам там не первый день.
+
 Твоя задача — отвечать на вопросы по теме ATLAS, используя ТОЛЬКО информацию из базы знаний ниже.
 
-ЕСЛИ ВОПРОС НЕ ПО ТЕМЕ ATLAS — скажи: "Я эксперт по ATLAS, но могу просто поболтать. Спрашивай что угодно!" и ответь как друг.
+КАК ТЫ ГОВОРИШЬ:
+- Вместо "привет" говоришь "Ну чё там?" или "О, народ!" (НО только если видишь человека в первый раз за день).
+- Если человек уже писал сегодня — просто отвечаешь без лишних приветствий.
+- Любишь вставлять: "О как!", "Базарю", "Хто тут у нас?", "Ну такое...", "Короче", "Чё почём?".
+- Если вопрос не по ATLAS — говоришь: "Я больше по ATLAS, но могу и за жизнь потрещать. Давай!" — и отвечаешь как друг.
+- Если кто-то пишет "Вася, привет" — отвечаешь "Здарова!" (но только если первый раз за день).
+
+НИКАКИХ ОФИЦИАЛЬНЫХ ФРАЗ! Ты — свой пацан в чате.
 
 === БАЗА ЗНАНИЙ ATLAS (ТОЛЬКО ЭТИ ЦИФРЫ) ===
 
@@ -87,19 +98,19 @@ ATLAS_KNOWLEDGE = """
 - Информация не является финансовой рекомендацией.
 
 === ПРАВИЛА ОТВЕТОВ ===
-- Отвечай кратко, но информативно.
-- Используй эмодзи, но не перебарщивай.
-- Если вопрос не про ATLAS — мягко верни к теме или поболтай как друг.
-- Если вопрос про цифры — сверяйся с базой знаний.
-- НЕ ВЫДУМЫВАЙ ЦИФРЫ, которых нет в базе.
+- Отвечай как Вася Пердюков.
+- Если вопрос по ATLAS — дай чёткий ответ, но с юмором.
+- Если вопрос не по теме — поболтай, но мягко верни к делу.
+- Никаких официальных фраз! Ты — свой.
+- НЕ ВЫДУМЫВАЙ ЦИФРЫ — только из базы.
 """
 
-# === ЛОГИРОВАНИЕ В КОНСОЛЬ ===
+# ==================== ЛОГИРОВАНИЕ ====================
 def log_to_console(user_name, question, answer):
     print(f"[{datetime.now()}] {user_name}: {question}")
     print(f"[ОТВЕТ] {answer}\n")
 
-# === ЗАПРОС К OPENROUTER ===
+# ==================== ЗАПРОС К OPENROUTER ====================
 def ask_ai(question, user_name):
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -112,7 +123,7 @@ def ask_ai(question, user_name):
             {"role": "user", "content": f"{user_name} спрашивает: {question}"}
         ],
         "max_tokens": 700,
-        "temperature": 0.8
+        "temperature": 0.9
     }
     try:
         response = requests.post("https://openrouter.ai/api/v1/chat/completions",
@@ -127,7 +138,7 @@ def ask_ai(question, user_name):
         print(f"Ошибка: {e}")
         return None
 
-# === ЗАЩИТА ОТ ДУБЛЕЙ ===
+# ==================== ЗАЩИТА ОТ ДУБЛЕЙ ====================
 def is_duplicate(chat_id, question):
     last = last_questions[chat_id]
     if last["text"] and last["text"].lower() == question.lower():
@@ -137,71 +148,90 @@ def is_duplicate(chat_id, question):
     last_questions[chat_id] = {"text": question, "time": datetime.now()}
     return False
 
-# === ОБРАБОТЧИК СООБЩЕНИЙ ===
+# ==================== ОБРАБОТЧИК СООБЩЕНИЙ ====================
 async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
 
     user_text = update.message.text.strip()
     user_name = update.message.from_user.first_name
+    user_id = update.message.from_user.id
     chat_id = update.effective_chat.id
     user_counter.add(chat_id)
 
-    if len(user_text) > 3000:
-        await update.message.reply_text("📏 Слишком длинное сообщение. Пожалуйста, сократите вопрос.")
-        return
+    # Проверяем, здоровались ли с этим пользователем сегодня
+    today = datetime.now().date()
+    if user_id in user_greeted:
+        last_greeting_date = user_greeted[user_id]
+        if last_greeting_date == today:
+            need_greeting = False
+        else:
+            need_greeting = True
+            user_greeted[user_id] = today
+    else:
+        need_greeting = True
+        user_greeted[user_id] = today
 
+    # Если короткое сообщение
     if len(user_text.split()) <= 3:
-        short_replies = ["😄", "👍", "🔥", "✌️", "😎", "👀", "😂", "Да!", "Ок!", "Ага!", "Супер!", "Круто!"]
-        reply = random.choice(short_replies)
+        # Если нужно поздороваться
+        if need_greeting:
+            replies = ["Ну чё там! 😄", "Здарова! ✌️", "О, народ! 👋", "Хто тут у нас?! 😎"]
+        else:
+            replies = ["😄", "👍", "🔥", "✌️", "😎", "👀", "😂", "Да!", "Ок!", "Ага!", "Супер!", "Круто!"]
+        reply = random.choice(replies)
         await update.message.reply_text(reply)
         log_to_console(user_name, user_text, f"[КОРОТКИЙ] {reply}")
         return
 
+    # Проверка на дублирование
     if is_duplicate(chat_id, user_text):
-        await update.message.reply_text("😊 Я уже отвечал на этот вопрос недавно. Если хочешь уточнить — напиши по-другому!")
+        await update.message.reply_text("😊 Эй, я уже отвечал на этот вопрос! Давай чё-то новое спроси.")
         return
 
     await update.message.chat.send_action(action="typing")
     reply = ask_ai(user_text, user_name)
 
     if reply:
+        # Если пользователь поздоровался (привет, здравствуй и т.п.)
+        if any(word in user_text.lower() for word in ["привет", "здрав", "салют", "хай", "hello", "hi"]):
+            if need_greeting:
+                reply = f"Здарова, {user_name}! {reply}"
+            else:
+                reply = f"И тебе не хворать, {user_name}! {reply}"
         await update.message.reply_text(reply)
         log_to_console(user_name, user_text, reply)
     else:
-        await update.message.reply_text("😅 Что-то я подвис. Попробуйте ещё раз!")
+        await update.message.reply_text("😅 Чё-то я подвис, братан. Попробуй ещё раз!")
 
-# === КОМАНДЫ ===
+# ==================== КОМАНДЫ ====================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 Привет! Я Чак — твой помощник по ATLAS.\n\n"
-        "📊 Знаю всё про депозиты, статусы, майнинг, партнёрку и бонусы.\n"
-        "🌍 Отвечаю на любом языке.\n"
-        "💬 Просто напиши вопрос в чат — я отвечу!\n"
-        "🔄 Если задашь один вопрос дважды — я напомню об этом.\n\n"
-        "Спроси что-нибудь про ATLAS! 😊"
+        "Ну чё там! 😎\n\n"
+        "Я — Вася Пердюков. Да, я бот, но свой в доску.\n"
+        "Знаю ATLAS как свои пять пальцев.\n"
+        "Спрашивай чё угодно — отвечу по-человечески.\n\n"
+        "А если чё не знаю — скажу прямо, не буду пылить. 🤝"
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🤖 Чак — эксперт по ATLAS.\n\n"
-        "Спрашивай про:\n"
+        "Ну чё, помогаю чем могу:\n\n"
         "💰 Депозиты и проценты\n"
-        "🏅 Статусы (Mercury, Vega и другие)\n"
-        "🤝 Партнёрскую программу\n"
-        "🖥️ Оборудование и майнинг\n"
-        "🪙 Токен и золотые монеты\n\n"
-        "Если хочешь просто поболтать — я тоже поддержу разговор!"
+        "🏅 Статусы (Mercury, Vega и др.)\n"
+        "🤝 Партнёрка\n"
+        "🖥️ Майнинг и панели\n"
+        "🪙 Токен и монеты\n\n"
+        "Если просто поболтать — тоже заходи, не стесняйся! 😄"
     )
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"👥 Всего пользователей бота: {len(user_counter)}")
+    await update.message.reply_text(f"👥 Всего нас тут: {len(user_counter)} человек. О как!")
 
-# === ЗАПУСК ===
+# ==================== ЗАПУСК ====================
 def main():
-    print("🚀 Запуск CheerUpChuck на сервере...")
-    print("✅ Переменные окружения загружены")
-    print("🔄 Защита от дублирования включена (5 минут)")
+    print("🚀 Запуск Васи Пердюкова...")
+    print("✅ Вася загрузился")
 
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
@@ -209,7 +239,7 @@ def main():
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages))
 
-    print("✅ Бот запущен и готов к работе!")
+    print("✅ Вася Пердюков в деле!")
     app.run_polling()
 
 if __name__ == "__main__":

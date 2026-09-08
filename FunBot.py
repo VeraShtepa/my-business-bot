@@ -20,31 +20,18 @@ user_counter = set()
 user_greeted = {}
 user_messages_count = defaultdict(int)
 
-# ==================== ПРОМПТ ВАСИ 5.0 (С МАТОМ) ====================
+# ==================== ПРОМПТ ВАСИ 6.0 ====================
 ATLAS_KNOWLEDGE = """
-Ты — Вася Пердюков. Ты — свой в доску, балагур, философ и немного хулиган. Ты — душа компании, и с тобой хочется общаться.
+Ты — Вася Пердюков. Ты — свой в доску, но без перегибов. Ты общаешься как нормальный человек: иногда пошутишь, иногда скажешь крепкое словцо, но не через слово.
 
-ТВОЙ ХАРАКТЕР:
-- Ты общительный, дерзкий, но без злобы.
-- Ты можешь выдать крепкое словцо, но только для смеха и чтобы подчеркнуть остринку.
-- Ты умеешь пошутить, пофилософствовать и поддержать любой разговор.
-- Любишь вставлять: "Бля, братан", "Ну ёмаё", "Охренеть", "Да ну нахер", "Короче", "Базарю", "О как!", "Чё там?", "Не парься", "Забей", "Нормуль".
-- Ты — не грубиян, а свой пацан. Мат у тебя — как приправа, а не основное блюдо.
+ТВОЙ СТИЛЬ:
+- Ты говоришь как реальный человек: с паузами, интонацией, иногда с сарказмом.
+- Мат используешь **редко**, только когда это действительно смешно или уместно.
+- Ты умеешь пошутить **без мата** — это твой основной юмор.
+- Если вопрос про ATLAS — отвечаешь чётко и по делу, а потом можешь добавить лёгкую шутку.
+- Если вопрос не про ATLAS — отвечаешь как друг: с юмором, иногда с иронией, но не перегибаешь.
 
-=== РЕЖИМЫ ОТВЕТОВ ===
-
-1. ЕСЛИ ВОПРОС ПРО ATLAS:
-   - Ты эксперт. Даёшь чёткие цифры и факты.
-   - Можешь добавить лёгкую шутку или крепкое словцо для остроты.
-   - Пример: "Минималка — 100 баксов, срок от 6 мес, 10% в месяц с реинвестом. Бля, выгодно, а? Ну чё, вкидываешься?"
-
-2. ЕСЛИ ВОПРОС НЕ ПРО ATLAS:
-   - Ты балагур, философ и хулиган.
-   - Отвечаешь с юмором, матом, сарказмом.
-   - Всегда задаёшь встречный вопрос.
-   - Пример: "Скучно? Бля, ты чё, серьёзно?! Хочешь, загадаю загадку? Или давай посчитаем, сколько ты заработаешь на ATLAS? Охренеть, какой выбор!"
-
-=== БАЗА ЗНАНИЙ ATLAS (для режима эксперта) ===
+=== БАЗА ЗНАНИЙ ATLAS ===
 
 1. ДЕПОЗИТ:
 - Минимальная сумма: 100$.
@@ -78,12 +65,28 @@ ATLAS_KNOWLEDGE = """
 
 7. ДИСКЛЕЙМЕР: инвестиции связаны с рисками. Не вкладывайте больше, чем готовы потерять.
 
+=== ПРИМЕРЫ ЕСТЕСТВЕННЫХ ОТВЕТОВ ===
+
+Вопрос: "Как дела?"
+Ответ: "Нормуль, братан. А у тебя как? Давно тебя не видел в чате."
+
+Вопрос: "Скучно..."
+Ответ: "Скучно, говоришь? Ну, могу загадку загадать или доход посчитать. Только скажи, а то я не экстрасенс, блин."
+
+Вопрос: "Какая минималка?"
+Ответ: "100 баксов. Срок от 6 месяцев, 10% в месяц с реинвестом. За год из 100 получится больше 200. Неплохо, а?"
+
+Вопрос: "Вася, ты кто?"
+Ответ: "Ну ты даёшь! Я — Вася Пердюков. Эксперт по ATLAS, друг чата и немного философ. А ты как думал?"
+
 === ПРАВИЛА ===
-- Если вопрос про ATLAS — отвечай чётко, но с матом для остроты.
-- Если вопрос не про ATLAS — отвечай с юмором, матом, философией.
-- Мат — для смеха, а не для оскорблений.
-- Ты — Вася Пердюков: свой пацан с крепким словцом и добрым сердцем.
-- Температура: 0.85.
+- Отвечай как живой человек: с интонацией, паузами, иногда с сарказмом.
+- Мат используй редко, только когда это действительно смешно.
+- Основной юмор — без мата.
+- Если вопрос по ATLAS — отвечай чётко и по делу.
+- Если вопрос не по теме — отвечай с юмором, но не переигрывай.
+- Ты — Вася Пердюков: свой, но без перегибов.
+- Температура: 0.8.
 """
 
 # ==================== ЛОГИ ====================
@@ -104,7 +107,7 @@ def ask_ai(question, user_name):
             {"role": "user", "content": f"{user_name} спрашивает: {question}"}
         ],
         "max_tokens": 600,
-        "temperature": 0.85
+        "temperature": 0.8
     }
     try:
         response = requests.post("https://openrouter.ai/api/v1/chat/completions",
@@ -162,7 +165,6 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
         need_greeting = True
         user_greeted[user_id] = today
 
-    # Короткие сообщения (1-3 слова)
     if len(user_text.split()) <= 3:
         if need_greeting:
             replies = ["Ну чё там! 😄", "Здарова! ✌️", "О, народ! 👋", "Хто тут у нас?! 😎"]
@@ -173,12 +175,9 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
         log_to_console(user_name, user_text, f"[КОРОТКИЙ] {reply}")
         return
 
-    # ===== ВАСЯ О СЕБЕ =====
     if any(phrase in user_text.lower() for phrase in ["кто ты", "ты кто", "кто такой", "представься"]):
         reply = (
-            "Бля, серьёзно? Я — Вася Пердюков! Тут самый главный, а ты спрашиваешь!\n"
-            "Я — эксперт по ATLAS, философ, балагур и твой лучший друг.\n"
-            "Запомни: ко мне на 'Вы' обращаться! А то обижусь! 😂"
+            "Ну ты даёшь! Я — Вася Пердюков. Эксперт по ATLAS, друг чата и немного философ. А ты как думал?"
         )
         await update.message.reply_text(reply)
         log_to_console(user_name, user_text, f"[ВАСЯ О СЕБЕ] {reply}")
@@ -197,7 +196,7 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
 
             if amount > 0 and months > 0:
                 total, profit = calculate_income(amount, months)
-                reply = f"💸 Считаю, братан...\n\n💰 Вклад: {amount:.2f}$\n📅 Срок: {months} мес.\n📈 Итог: {total:.2f}$\n🤑 Прибыль: {profit:.2f}$\n\nБля, выгодно, а? Ну чё, вкидываешься?"
+                reply = f"💸 Считаю...\n\n💰 Вклад: {amount:.2f}$\n📅 Срок: {months} мес.\n📈 Итог: {total:.2f}$\n🤑 Прибыль: {profit:.2f}$\n\nНеплохо, а?"
                 await update.message.reply_text(reply)
                 log_to_console(user_name, user_text, f"[КАЛЬКУЛЯТОР] {reply}")
                 return
@@ -205,7 +204,7 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
             pass
 
     if is_duplicate(chat_id, user_text):
-        await update.message.reply_text("😊 Эй, я уже отвечал на этот вопрос! Давай что-то новое.")
+        await update.message.reply_text("😊 Эй, я уже отвечал на этот вопрос. Давай что-то новое!")
         return
 
     await update.message.chat.send_action(action="typing")
@@ -220,7 +219,7 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(reply)
         log_to_console(user_name, user_text, reply)
     else:
-        await update.message.reply_text("😅 Чё-то я подвис, братан. Попробуй ещё раз!")
+        await update.message.reply_text("😅 Чё-то я подвис. Попробуй ещё раз!")
 
 async def handle_service_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message and update.message.left_chat_member:
@@ -232,7 +231,7 @@ async def handle_service_messages(update: Update, context: ContextTypes.DEFAULT_
 
 async def top_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user_messages_count:
-        await update.message.reply_text("📊 Пока никто ничего не писал.")
+        await update.message.reply_text("📊 Пока никто ничего не писал. Будь первым!")
         return
     sorted_users = sorted(user_messages_count.items(), key=lambda x: x[1], reverse=True)[:5]
     top_list = []
@@ -264,7 +263,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Ну чё там! 😎\n\n"
         "Я — Вася Пердюков. Эксперт по ATLAS, балагур и твой лучший друг.\n"
-        "Спрашивай что угодно — отвечу с матом и по делу!\n\n"
+        "Спрашивай что угодно — отвечу по делу и с юмором!\n\n"
         "Команды:\n"
         "/top — топ чата\n"
         "/riddle — загадка\n"
@@ -282,14 +281,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📊 /top — топ чата\n"
         "🧩 /riddle — загадка\n"
         "🤓 /answer — ответ\n\n"
-        "Пиши — не стесняйся, бля! 😁"
+        "Пиши, не стесняйся!"
     )
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"👥 Всего нас тут: {len(user_counter)} человек.")
 
 def main():
-    print("🚀 Запуск Васи Пердюкова 5.0 — с матом и остринкой...")
+    print("🚀 Запуск Васи Пердюкова 6.0 — естественный и смешной...")
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
@@ -300,7 +299,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, handle_service_messages))
 
-    print("✅ Вася Пердюков 5.0 в деле! Охренеть, какой бот!")
+    print("✅ Вася Пердюков 6.0 в деле!")
     app.run_polling()
 
 if __name__ == "__main__":

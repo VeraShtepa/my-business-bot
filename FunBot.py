@@ -177,6 +177,19 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
         log_to_console(user_name, user_text, f"[КОРОТКИЙ] {reply}")
         return
 
+    # ===== ВАСЯ О СЕБЕ =====
+    if any(phrase in user_text.lower() for phrase in ["кто ты", "ты кто", "кто такой", "представься", "расскажи о себе"]):
+        reply = (
+            "Ты чё, попутал, братан?! 😤\n\n"
+            "Я тут **самый главный** — **Вася Пердюков**! \n"
+            "И запомни: **ко мне на \"Вы\" обращаться**! Я тебе не какой-то там Чак или бот без имени.\n"
+            "Я — эксперт по ATLAS, душа компании и твой лучший друг в этом чате. \n"
+            "Так что уважай, и будет тебе счастье! 🤝"
+        )
+        await update.message.reply_text(reply)
+        log_to_console(user_name, user_text, f"[ВАСЯ О СЕБЕ] {reply}")
+        return
+
     # Калькулятор дохода
     amount_match = re.search(r'(\d+[\.,]?\d*)\s*(?:тыс|к|k|$)', user_text, re.IGNORECASE)
     if amount_match and any(word in user_text.lower() for word in ["доход", "заработа", "получ", "сколько", "калькулят", "прибыль", "через"]):

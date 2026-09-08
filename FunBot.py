@@ -20,86 +20,60 @@ user_counter = set()
 user_greeted = {}
 user_messages_count = defaultdict(int)
 
-# ==================== БАЗА ЗНАНИЙ ATLAS (ПОЛНАЯ) ====================
+# ==================== БАЗА ЗНАНИЙ ATLAS (ЧЁТКАЯ) ====================
 ATLAS_KNOWLEDGE = """
-Ты — Вася Пердюков. Твоя ГЛАВНАЯ задача — быть экспертом по компании ATLAS и помогать участникам чата с вопросами о депозитах, статусах, партнёрской программе, оборудовании, токене и золотых монетах.
+Ты — Вася Пердюков. Твоя ГЛАВНАЯ задача — быть экспертом по компании ATLAS и давать чёткие ответы по депозитам, статусам, партнёрской программе, оборудованию, токену и золотым монетам.
 
-Ты отвечаешь по-свойски, с юмором и иногда с лёгкой пошлинкой, но при этом ты ОБЯЗАН давать точные цифры и факты из базы знаний. Если вопрос по ATLAS — сначала чёткий ответ, потом шутка (если уместно).
+Если вопрос по ATLAS — сначала даёшь чёткий, точный ответ по цифрам, а потом добавляешь юмор.
 
-=== БАЗА ЗНАНИЙ ATLAS (ТОЛЬКО ЭТИ ЦИФРЫ!) ===
+=== БАЗА ЗНАНИЙ ATLAS ===
 
-1. КОМПАНИЯ:
-- Название: ATLAS
-- Руководитель: Дмитрий Крылов, криптоэнтузиаст с опытом 10+ лет.
-- Направления: майнинг-оборудование, солнечные панели, торговый ИИ-бот, токен.
-
-2. ДЕПОЗИТ:
+1. ДЕПОЗИТ:
 - Минимальная сумма: 100$.
 - Срок: от 6 месяцев.
 - Начисление: 0.333% в день (это 10% в месяц).
 - Реинвест: от 25$.
-- Пример: при вкладе 10.000$ и реинвесте через год будет 31.379$ (чистая прибыль 21.379$ = 213% годовых).
+- Пример: 10.000$ с реинвестом через год → 31.379$ (чистая прибыль 21.379$ = 213% годовых).
 
-3. СТАТУСЫ (уровни):
-- Atlas One: личный вклад 500$, оборот 10.000$, доход от дохода 7%
+2. СТАТУСЫ:
+- Atlas One: 500$, оборот 10.000$, доход 7%
 - Atlas Venus: 1.000$, оборот 20.000$, доход 9.75%
-- Atlas Mercury: 2.500$, оборот 50.000$, доход 12%, бонус 500$ + золотая монета 5г
+- Atlas Mercury: 2.500$, оборот 50.000$, доход 12%, бонус 500$ + монета 5г
 - Atlas Mars: 5.000$, оборот 75.000$, доход 13.25%, бонус 750$
-- Atlas Vega: 10.000$, оборот 100.000$, доход 14.5%, бонус 1.000$ + золотая монета 10г
+- Atlas Vega: 10.000$, оборот 100.000$, доход 14.5%, бонус 1.000$ + монета 10г
 - Atlas Tron: 15.000$, оборот 150.000$, доход 15.75%, бонус 1.500$
 - Atlas Uran: 25.000$, оборот 250.000$, доход 17%, бонус 5.000$
 - Atlas Sirius: 50.000$, оборот 500.000$, доход 17.25%, бонус 10.000$
 - Atlas Terra: 100.000$, оборот 1.000.000$, доход 18.5%, бонус 25.000$
 - Atlas Magnum: 200.000$, оборот 2.500.000$, доход 19.75%, бонус 50.000$
 
-4. ПАРТНЁРСКАЯ ПРОГРАММА (проценты по глубине):
-- 1-я линия: 70%
-- 2-я линия: 60%
-- 3-я линия: 50%
-- 4-я линия: 40%
-- 5-я линия: 30%
-- 6-я линия: 20%
-- 7-я линия: 10%
-- 8-я линия: 5%
-- 9-я линия: 5%
-- 10-я линия: 5%
+3. ПАРТНЁРСКИЕ ПРОЦЕНТЫ:
+1-я линия 70%, 2-я 60%, 3-я 50%, 4-я 40%, 5-я 30%, 6-я 20%, 7-я 10%, 8-10-я 5%.
 
-5. ОБОРУДОВАНИЕ:
-- Солнечные панели: от 100$, помогают снизить расходы на электроэнергию.
-- Майнинг-оборудование: от 1.000$, доходность до 20$ в день, окупаемость за несколько месяцев.
-- Оборудование энергосберегающее благодаря фирменному ПО.
+4. ОБОРУДОВАНИЕ:
+- Солнечные панели: от 100$
+- Майнинг-оборудование: от 1.000$, доход до 20$/день
 
-6. ТОКЕН:
-- Компания выпустит собственный токен в ближайшее время.
-- Токен нужен для удобного взаимодействия и прозрачного учёта.
+5. ТОКЕН: будет выпущен в ближайшее время.
 
-7. ЗОЛОТЫЕ МОНЕТЫ:
-- Можно купить физическую золотую монету 585° пробы.
-- Бонусом выдают: 5г монету за статус Mercury, 10г монету за статус Vega.
+6. ЗОЛОТЫЕ МОНЕТЫ: 585° пробы. Бонусом за Mercury (5г) и Vega (10г).
 
-8. ИСТОЧНИКИ ДОХОДА КОМПАНИИ:
-- Майнинг-центры в разных странах (пассивный доход).
-- Торговый ИИ-бот (анализирует рынок и совершает сделки).
-- Солнечные панели.
-- Цифровые продукты.
-
-9. ДИСКЛЕЙМЕР:
-- Инвестиции связаны с рисками.
-- Не вкладывайте больше, чем готовы потерять.
-- Информация не является финансовой рекомендацией.
+7. ДИСКЛЕЙМЕР: инвестиции связаны с рисками. Не вкладывайте больше, чем готовы потерять.
 
 === ПРАВИЛА ОТВЕТОВ ===
-- Если вопрос по ATLAS — сначала дай чёткий, точный ответ по цифрам, а потом уже добавляй юмор.
-- Если вопрос не по теме — можешь поболтать, но не уходи далеко от темы.
-- Отвечай кратко, но информативно.
-- Используй эмодзи, но не перебарщивай.
+- Если вопрос про ATLAS — дай чёткий, точный ответ.
+- Если вопрос не по теме — можешь поболтать, но мягко верни к ATLAS.
+- Отвечай кратко, информативно.
 - Ты — Вася Пердюков, но в первую очередь эксперт.
+- Температура твоих ответов: 0.7 (ровно, без перегибов).
 """
 
+# ==================== ЛОГИ ====================
 def log_to_console(user_name, question, answer):
     print(f"[{datetime.now()}] {user_name}: {question}")
     print(f"[ОТВЕТ] {answer}\n")
 
+# ==================== ЗАПРОС К OPENROUTER ====================
 def ask_ai(question, user_name):
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -111,8 +85,8 @@ def ask_ai(question, user_name):
             {"role": "system", "content": ATLAS_KNOWLEDGE},
             {"role": "user", "content": f"{user_name} спрашивает: {question}"}
         ],
-        "max_tokens": 600,
-        "temperature": 0.85
+        "max_tokens": 500,
+        "temperature": 0.7  # 👈 ровно, без перегибов
     }
     try:
         response = requests.post("https://openrouter.ai/api/v1/chat/completions",
@@ -127,6 +101,7 @@ def ask_ai(question, user_name):
         print(f"Ошибка: {e}")
         return None
 
+# ==================== ЗАЩИТА ОТ ДУБЛЕЙ ====================
 def is_duplicate(chat_id, question):
     last = last_questions[chat_id]
     if last["text"] and last["text"].lower() == question.lower():
@@ -136,6 +111,7 @@ def is_duplicate(chat_id, question):
     last_questions[chat_id] = {"text": question, "time": datetime.now()}
     return False
 
+# ==================== КАЛЬКУЛЯТОР ====================
 def calculate_income(amount, months):
     if not amount or amount <= 0:
         return None
@@ -145,6 +121,7 @@ def calculate_income(amount, months):
     profit = total - amount
     return round(total, 2), round(profit, 2)
 
+# ==================== ОБРАБОТЧИК СООБЩЕНИЙ ====================
 async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
@@ -167,6 +144,7 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
         need_greeting = True
         user_greeted[user_id] = today
 
+    # Короткие сообщения
     if len(user_text.split()) <= 3:
         if need_greeting:
             replies = ["Ну чё там! 😄", "Здарова! ✌️", "О, народ! 👋", "Хто тут у нас?! 😎"]
@@ -178,13 +156,10 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     # ===== ВАСЯ О СЕБЕ =====
-    if any(phrase in user_text.lower() for phrase in ["кто ты", "ты кто", "кто такой", "представься", "расскажи о себе"]):
+    if any(phrase in user_text.lower() for phrase in ["кто ты", "ты кто", "кто такой", "представься"]):
         reply = (
-            "Ты чё, попутал, братан?! 😤\n\n"
-            "Я тут **самый главный** — **Вася Пердюков**! \n"
-            "И запомни: **ко мне на \"Вы\" обращаться**! Я тебе не какой-то там Чак или бот без имени.\n"
-            "Я — эксперт по ATLAS, душа компании и твой лучший друг в этом чате. \n"
-            "Так что уважай, и будет тебе счастье! 🤝"
+            "Я Вася Пердюков! Эксперт по ATLAS и душа компании.\n"
+            "Спрашивай по делу — отвечу чётко и по-свойски! 😎"
         )
         await update.message.reply_text(reply)
         log_to_console(user_name, user_text, f"[ВАСЯ О СЕБЕ] {reply}")
@@ -203,7 +178,7 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
 
             if amount > 0 and months > 0:
                 total, profit = calculate_income(amount, months)
-                reply = f"💸 Считаю, братан...\n\n💰 Вклад: {amount:.2f}$\n📅 Срок: {months} мес.\n📈 Итог: {total:.2f}$\n🤑 Прибыль: {profit:.2f}$\n\nЭто по 10% в месяц с реинвестом. О как!"
+                reply = f"💸 Считаю...\n\n💰 Вклад: {amount:.2f}$\n📅 Срок: {months} мес.\n📈 Итог: {total:.2f}$\n🤑 Прибыль: {profit:.2f}$"
                 await update.message.reply_text(reply)
                 log_to_console(user_name, user_text, f"[КАЛЬКУЛЯТОР] {reply}")
                 return
@@ -211,7 +186,7 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
             pass
 
     if is_duplicate(chat_id, user_text):
-        await update.message.reply_text("😊 Эй, я уже отвечал на этот вопрос! Давай чё-то новое спроси.")
+        await update.message.reply_text("😊 Я уже отвечал на этот вопрос. Давай что-то новое!")
         return
 
     await update.message.chat.send_action(action="typing")
@@ -226,19 +201,19 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(reply)
         log_to_console(user_name, user_text, reply)
     else:
-        await update.message.reply_text("😅 Чё-то я подвис, братан. Попробуй ещё раз!")
+        await update.message.reply_text("😅 Чё-то я подвис. Попробуй ещё раз!")
 
 async def handle_service_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message and update.message.left_chat_member:
         try:
             await update.message.delete()
-            print(f"🗑️ Удалил сообщение о выходе {update.message.left_chat_member.first_name}")
+            print(f"🗑️ Удалил сообщение о выходе")
         except Exception as e:
             print(f"❌ Не удалось удалить: {e}")
 
 async def top_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user_messages_count:
-        await update.message.reply_text("📊 Пока никто ничего не писал. Будь первым! 😄")
+        await update.message.reply_text("📊 Пока никто ничего не писал.")
         return
     sorted_users = sorted(user_messages_count.items(), key=lambda x: x[1], reverse=True)[:5]
     top_list = []
@@ -249,7 +224,7 @@ async def top_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             name = "Аноним"
         top_list.append(f"👤 {name} — {count} сообщений")
-    reply = "📊 **Топ-чата сегодня:**\n\n" + "\n".join(top_list)
+    reply = "📊 **Топ-чата:**\n\n" + "\n".join(top_list)
     await update.message.reply_text(reply)
 
 async def riddle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -257,11 +232,9 @@ async def riddle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         {"q": "Что растёт, когда вкладываешь, и уменьшается, когда выводишь?", "a": "Депозит!"},
         {"q": "Что может быть и золотым, и цифровым, и всегда в цене?", "a": "Токен!"},
         {"q": "Что даёт свет и деньги, но не требует счётчика?", "a": "Солнечная панель!"},
-        {"q": "Кто работает 24/7, не пьёт, не ест и приносит доход?", "a": "Майнинг-бот!"},
-        {"q": "Что можно начать с 100$ и через год иметь 31.379$?", "a": "Депозит в ATLAS!"},
     ]
     riddle = random.choice(riddles)
-    await update.message.reply_text(f"🧩 **Загадка от Васи Пердюкова:**\n\n{riddle['q']}")
+    await update.message.reply_text(f"🧩 **Загадка от Васи:**\n\n{riddle['q']}")
     context.user_data['riddle_answer'] = riddle['a']
 
 async def answer_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -271,18 +244,16 @@ async def answer_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Ну чё там! 😎\n\n"
-        "Я — Вася Пердюков, эксперт по ATLAS и свой пацан.\n"
-        "Могу посчитать доход, загадать загадку, показать топ чата и удалять сообщения о выходе.\n\n"
+        "Я — Вася Пердюков. Эксперт по ATLAS и свой пацан.\n"
+        "Спрашивай по делу — отвечу чётко!\n\n"
         "Команды:\n"
-        "/top — топ самых активных\n"
-        "/riddle — загадка от Васи\n"
-        "/answer — ответ на загадку\n\n"
-        "Спрашивай чё угодно по ATLAS — отвечу чётко и по-свойски! 🔥"
+        "/top — топ чата\n"
+        "/riddle — загадка\n"
+        "/answer — ответ\n"
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Ну чё, помогаю чем могу:\n\n"
         "💰 Депозиты и проценты\n"
         "🏅 Статусы (Mercury, Vega и др.)\n"
         "🤝 Партнёрка\n"
@@ -290,15 +261,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🪙 Токен и монеты\n"
         "📊 /top — топ чата\n"
         "🧩 /riddle — загадка\n"
-        "🤓 /answer — ответ на загадку\n\n"
-        "Если просто поболтать — тоже заходи! 😄"
+        "🤓 /answer — ответ\n"
     )
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"👥 Всего нас тут: {len(user_counter)} человек. О как!")
+    await update.message.reply_text(f"👥 Всего нас тут: {len(user_counter)} человек.")
 
 def main():
-    print("🚀 Запуск Васи Пердюкова — эксперта по ATLAS...")
+    print("🚀 Запуск Васи Пердюкова...")
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
@@ -309,7 +279,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, handle_service_messages))
 
-    print("✅ Вася Пердюков — эксперт по ATLAS — в деле!")
+    print("✅ Вася Пердюков в деле!")
     app.run_polling()
 
 if __name__ == "__main__":

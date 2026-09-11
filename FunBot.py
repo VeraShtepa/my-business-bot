@@ -22,11 +22,8 @@ user_counter = set()
 user_greeted = {}
 user_messages_count = defaultdict(int)
 
-# История сообщений по юзеру (последние 10)
 user_history = defaultdict(lambda: deque(maxlen=10))
-# Сколько сообщений подряд бот проигнорировал в чате
 ignored_streak = defaultdict(int)
-# Последняя тема разговора в чате
 last_topic = defaultdict(str)
 
 # ==================== ПРОМПТ ВАСИ 7.0 ====================
@@ -135,6 +132,37 @@ def is_atlas(text: str) -> bool:
     t = text.lower()
     return any(w in t for w in ATLAS_WORDS)
 
+# ==================== РЕАКЦИИ ====================
+# Наборы реакций под разные режимы
+REACTIONS_DEFAULT = ["👍", "🔥", "😎", "👀", "❤️", "🤔", "😂"]
+REACTIONS_RUDE    = ["👀", "🤔", "🙄"]              # на грубость — наблюдает
+REACTIONS_SAD     = ["🤗", "❤️", "🥺"]              # поддержка
+REACTIONS_FLIRT   = ["❤️", "🔥", "😏", "🤗"]        # флирт
+REACTIONS_ATLAS   = ["👍", "🔥", "🤝", "💯"]        # по делу
+REACTIONS_IGNORE  = ["👍", "👀", "🔥", "❤️"]        # тихие реакции, когда не отвечает
+
+async def set_reaction(context, chat_id, message_id, mode="default"):
+    """
+    Ставит реакцию на сообщение. Если Telegram ругается — просто пропускаем.
+    """
+    pool = {
+        "rude": REACTIONS_RUDE,
+        "sad": REACTIONS_SAD,
+        "flirt": REACTIONS_FLIRT,
+        "atlas": REACTIONS_ATLAS,
+        "default": REACTIONS_DEFAULT,
+    }.get(mode, REACTIONS_DEFAULT)
+
+    try:
+        await context.bot.set_message_reaction(
+            chat_id=chat_id,
+            message_id=message_id,
+            reaction=random.choice(pool)
+        )
+    except Exception as e:
+        # Реакции могут не работать (нет прав, старый чат, лимиты) — не роняем бота
+        print(f"⚠️ Реакция не поставилась: {e}")
+
 # ==================== ЛОГИ ====================
 def log_to_console(user_name, question, answer):
     print(f"[{datetime.now()}] {user_name}: {question}")
@@ -206,28 +234,17 @@ def calculate_income(amount, months):
 
 # ==================== РЕШЕНИЕ: ОТВЕЧАТЬ ИЛИ НЕТ ====================
 def should_reply(update, user_text, bot_username):
-    """
-    Определяет, должен ли бот отвечать.
-    Условия ответа:
-    - прямое обращение по имени бота
-    - вопрос (?)
-    - триггер по теме (грубость, грусть, флирт, ATLAS)
-    - случайная вероятность (чтобы был живым, но не навязчивым)
-    """
     t = user_text.lower()
     chat_id = update.effective_chat.id
 
-    # Прямое упоминание
     if bot_username and bot_username.lower() in t:
         return True, "mention"
-    if "вася" in t or "вас" in t:
+    if "вася" in t:
         return True, "name"
 
-    # Вопрос
     if "?" in user_text or any(w in t for w in ["как ", "почему", "зачем", "когда", "сколько", "что "]):
         return True, "question"
 
-    # Триггеры
     if is_rude(user_text):
         return True, "rude"
     if is_sad(user_text):
@@ -237,7 +254,6 @@ def should_reply(update, user_text, bot_username):
     if is_atlas(user_text):
         return True, "atlas"
 
-    # Случайность — бот иногда вклинивается сам
     if random.random() < 0.15:
         return True, "random"
 
@@ -253,11 +269,10 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id = update.message.from_user.id
     chat_id = update.effective_chat.id
     bot_username = context.bot.username
+    message_id = update.message.message_id
 
     user_counter.add(chat_id)
     user_messages_count[user_id] += 1
-
-    # Сохраняем в историю
     user_history[user_id].append(f"{user_name}: {user_text}")
 
     # Решаем, отвечать или нет
@@ -265,7 +280,12 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if not reply_needed:
         ignored_streak[chat_id] += 1
-        # Если долго игнорят — можем вклиниться с "я тут вообще-то"
+
+        # Тихая реакция — иногда просто ставит смайл, даже если не отвечает
+        if random.random() < 0.10:
+            await set_reaction(context, chat_id, message_id, "default")
+
+        # Если долго игнорят — может вклиниться
         if ignored_streak[chat_id] >= 15 and random.random() < 0.3:
             ignored_streak[chat_id] = 0
             jokes = [
@@ -283,6 +303,7 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
     words = user_text.split()
     if len(words) <= 2 and mode not in ("rude", "sad", "flirt", "atlas", "name", "mention"):
         if any(w in user_text.lower() for w in GREETING_WORDS):
+            await set_reaction(context, chat_id, message_id, "default")
             today = datetime.now().date()
             if user_greeted.get(user_id) == today:
                 await update.message.reply_text(random.choice(["И тебе не хворать! 😄", "О, снова ты! 👋", "Хай!"]))
@@ -306,6 +327,7 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
                 total, profit = calculate_income(amount, months)
                 reply = (f"💸 Считаю...\n\n💰 Вклад: {amount:.2f}$\n📅 Срок: {months} мес.\n"
                          f"📈 Итог: {total:.2f}$\n🤑 Прибыль: {profit:.2f}$\n\nНеплохо, а?")
+                await set_reaction(context, chat_id, message_id, "atlas")
                 await update.message.reply_text(reply)
                 log_to_console(user_name, user_text, f"[КАЛЬКУЛЯТОР] {reply}")
                 return
@@ -316,9 +338,7 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("😊 Эй, я уже отвечал на это. Давай что-то новое!")
         return
 
-    await update.message.chat.send_action(action="typing")
-
-    # Режим для промпта
+    # Режим для промпта и для реакции
     mode_map = {
         "rude": "rude", "sad": "sad", "flirt": "flirt",
         "atlas": "atlas", "question": "atlas" if is_atlas(user_text) else "default",
@@ -326,6 +346,13 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
     }
     ai_mode = mode_map.get(mode, "default")
 
+    # 1) Сначала ставим реакцию
+    await set_reaction(context, chat_id, message_id, ai_mode)
+
+    # 2) Потом показываем "печатает"
+    await update.message.chat.send_action(action="typing")
+
+    # 3) И отправляем ответ
     history = list(user_history[user_id])[-5:]
     reply = ask_ai(user_text, user_name, history=history, mode=ai_mode)
 
@@ -405,7 +432,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ==================== ЗАПУСК ====================
 def main():
-    print("🚀 Запуск Васи Пердюкова 7.0 — душа компании...")
+    print("🚀 Запуск Васи Пердюкова 7.1 — с реакциями...")
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
@@ -416,7 +443,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, handle_service_messages))
 
-    print("✅ Вася Пердюков 7.0 в деле!")
+    print("✅ Вася Пердюков 7.1 в деле!")
     app.run_polling()
 
 if __name__ == "__main__":

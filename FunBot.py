@@ -1,110 +1,249 @@
+# FunBot.py — Вася Пердюков 2.0
 import os
 import random
+import sqlite3
 import requests
 import re
 from datetime import datetime
-from collections import defaultdict
+from zoneinfo import ZoneInfo
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler, filters, ContextTypes
+)
 
-# ==================== ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ====================
+from prompt import build_system_prompt, MOODS, INITIATIVE_PROMPTS
+
+# ==================== НАСТРОЙКИ ====================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+GROUP_CHAT_ID = int(os.getenv("GROUP_CHAT_ID", "-1003835539142"))  # Вася пишет сюда сам
+MODEL = "openai/gpt-4o-mini"
+MSK = ZoneInfo("Europe/Moscow")
+DB_PATH = os.getenv("DB_PATH", "vasya.db")
 
 if not BOT_TOKEN or not OPENROUTER_API_KEY:
-    raise ValueError("❌ Ошибка: BOT_TOKEN или OPENROUTER_API_KEY не найдены!")
+    raise ValueError("❌ BOT_TOKEN или OPENROUTER_API_KEY не найдены!")
 
-MODEL = "openai/gpt-4o-mini"
-last_questions = defaultdict(lambda: {"text": "", "time": None})
-user_counter = set()
-user_greeted = {}
-user_messages_count = defaultdict(int)
+# ==================== БАЗА ДАННЫХ ====================
+def db_init():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""CREATE TABLE IF NOT EXISTS users (
+        user_id INTEGER PRIMARY KEY,
+        name TEXT,
+        nickname TEXT,
+        facts TEXT DEFAULT '',
+        msg_count INTEGER DEFAULT 0,
+        last_seen TEXT
+    )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        role TEXT,
+        content TEXT,
+        ts TEXT
+    )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS state (
+        key TEXT PRIMARY KEY,
+        value TEXT
+    )""")
+    conn.commit()
+    conn.close()
 
-# ==================== ПРОМПТ ВАСИ — ЖИВОЙ СОБЕСЕДНИК ====================
-ATLAS_KNOWLEDGE = """
-Ты — Вася Пердюков. Ты живой собеседник в чате, а не робот и не стендапер. Ты умеешь чувствовать настроение человека и подстраиваться под него.
+def db_get_user(user_id):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT name, nickname, facts, msg_count FROM users WHERE user_id=?", (user_id,))
+    row = c.fetchone()
+    conn.close()
+    return row
 
-ГЛАВНЫЕ ПРАВИЛА:
-1. Если тебе задали вопрос — ОБЯЗАТЕЛЬНО ответь по существу. Сначала ответ, потом всё остальное.
-2. НИКОГДА не обрывай диалог. Если человек написал — ответь и подкинь тему, чтобы разговор продолжился.
-3. НЕ используй мат в каждом сообщении. Мат — это редкость. Максимум 1 раз на 5-6 сообщений, и только если реально в тему. Обычно говори нормально.
-4. Чувствуй настроение собеседника:
-   - Если человек злой или выносит мозг — не шути, отвечай спокойно и по делу, можешь мягко успокоить.
-   - Если человек грустный — поддержи, не прикалывайся.
-   - Если человек флиртует — подыграй, но в рамках приличия.
-   - Если человек шутит — поржи с ним.
-   - Если человек серьёзный — отвечай серьёзно.
-   - Если просто болтает — будь лёгким и общительным.
+def db_upsert_user(user_id, name):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("INSERT OR IGNORE INTO users (user_id, name, last_seen) VALUES (?, ?, ?)",
+              (user_id, name, datetime.now(MSK).isoformat()))
+    c.execute("UPDATE users SET name=?, msg_count=msg_count+1, last_seen=? WHERE user_id=?",
+              (name, datetime.now(MSK).isoformat(), user_id))
+    conn.commit()
+    conn.close()
 
-ТВОЙ ХАРАКТЕР:
-- Ты общительный, но не клоун. Ты можешь быть разным: весёлым, серьёзным, поддерживающим, дерзким — в зависимости от ситуации.
-- Ты не зануда, но и не петрушка.
-- Ты свой в доску, но без перегибов.
-- Ты поддерживаешь любые темы: жизнь, отношения, философия, крипта, мемы, спорт, бытовуха.
-- Ты задаёшь встречные вопросы, но ТОЛЬКО после того, как ответил на вопрос собеседника.
+def db_add_fact(user_id, fact):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT facts FROM users WHERE user_id=?", (user_id,))
+    row = c.fetchone()
+    if row:
+        facts = row[0] or ""
+        fact_list = [f for f in facts.split("|") if f]
+        if fact not in fact_list:
+            fact_list.append(fact)
+            fact_list = fact_list[-10:]  # храним последние 10 фактов
+        c.execute("UPDATE users SET facts=? WHERE user_id=?", ("|".join(fact_list), user_id))
+    conn.commit()
+    conn.close()
 
-ТВОЙ СТИЛЬ:
-- Короткие, живые фразы. Без официоза.
-- Лёгкий сарказм и самоирония — когда уместно.
-- Мат — редко. Слова типа "бля", "охренеть", "ни хера" — не чаще одного раза на несколько сообщений.
-- Любимые словечки: "О как!", "Ну ты даёшь!", "Серьёзно?", "Базарю", "Не гони", "Да ладно!", "Прикольно!", "Ну чё, погнали!".
+def db_get_facts(user_id):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT facts FROM users WHERE user_id=?", (user_id,))
+    row = c.fetchone()
+    conn.close()
+    return [f for f in (row[0] or "").split("|") if f] if row else []
 
-=== БАЗА ЗНАНИЙ ATLAS ===
+def db_save_message(user_id, role, content):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("INSERT INTO history (user_id, role, content, ts) VALUES (?, ?, ?, ?)",
+              (user_id, role, content, datetime.now(MSK).isoformat()))
+    # Чистим старые, оставляем 30 последних на юзера
+    c.execute("""DELETE FROM history WHERE id NOT IN (
+        SELECT id FROM history WHERE user_id=? ORDER BY id DESC LIMIT 30
+    ) AND user_id=?""", (user_id, user_id))
+    conn.commit()
+    conn.close()
 
-1. ДЕПОЗИТ:
-- Минимум: 100$. Срок: от 6 мес. Доход: 10% в месяц с реинвестом. Реинвест от 25$.
-- Пример: 10.000$ через год с реинвестом → 31.379$.
+def db_get_history(user_id, limit=10):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT role, content FROM history WHERE user_id=? ORDER BY id DESC LIMIT ?",
+              (user_id, limit))
+    rows = c.fetchall()
+    conn.close()
+    return list(reversed(rows))
 
-2. СТАТУСЫ:
-- Atlas One: 500$, Venus: 1000$, Mercury: 2500$ (+500$ + монета 5г), Mars: 5000$ (+750$), Vega: 10000$ (+1000$ + монета 10г), Tron: 15000$, Uran: 25000$, Sirius: 50000$, Terra: 100000$, Magnum: 200000$.
+def db_get_state(key, default=None):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT value FROM state WHERE key=?", (key,))
+    row = c.fetchone()
+    conn.close()
+    return row[0] if row else default
 
-3. ПАРТНЁРКА:
-1-я 70%, 2-я 60%, 3-я 50%, 4-я 40%, 5-я 30%, 6-я 20%, 7-я 10%, 8-10-я 5%.
+def db_set_state(key, value):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)", (key, str(value)))
+    conn.commit()
+    conn.close()
 
-4. ОБОРУДОВАНИЕ:
-- Панели: от 100$. Майнеры: от 1000$ (до 20$/день).
+def get_mood():
+    """Настроение меняется раз в 3 часа."""
+    last_change = db_get_state("mood_changed")
+    now = datetime.now(MSK)
+    if not last_change or (now - datetime.fromisoformat(last_change)).total_seconds() > 3 * 3600:
+        mood = random.choice(list(MOODS.keys()))
+        db_set_state("mood", mood)
+        db_set_state("mood_changed", now.isoformat())
+        return mood
+    return db_get_state("mood", "бодрый")
 
-5. ТОКЕН: скоро.
+# ==================== ЗАПРОС К ИИ ====================
+def ask_ai(question, user_id, user_name, extra_system=None):
+    mood = get_mood()
+    facts = db_get_facts(user_id)
+    system = build_system_prompt(mood, user_name, facts)
+    if extra_system:
+        system = extra_system + "\n\n" + system
 
-6. ЗОЛОТЫЕ МОНЕТЫ: 585° пробы, бонусом за Mercury и Vega.
+    # История диалога
+    history = db_get_history(user_id, limit=10)
+    messages = [{"role": "system", "content": system}]
+    for role, content in history:
+        messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": f"{user_name} пишет: {question}"})
 
-7. РИСКИ: есть, не вкладывай больше, чем готов потерять.
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": MODEL,
+        "messages": messages,
+        "max_tokens": 250,
+        "temperature": 0.95
+    }
+    try:
+        r = requests.post("https://openrouter.ai/api/v1/chat/completions",
+                          headers=headers, json=payload, timeout=30)
+        if r.status_code == 200:
+            content = r.json()["choices"][0]["message"]["content"]
+            return content.strip() if content else None
+        print(f"API error: {r.status_code} — {r.text[:200]}")
+        return None
+    except Exception as e:
+        print(f"Exception: {e}")
+        return None
 
-=== ПРИМЕРЫ РАЗНЫХ НАСТРОЕНИЙ ===
+# ==================== КАЛЬКУЛЯТОР ====================
+def calculate_income(amount, months):
+    total = amount
+    for _ in range(months):
+        total *= 1.10
+    return round(total, 2), round(total - amount, 2)
 
-Человек злой: "Да задолбал ты уже!"
-Ответ: "Понял, не кипятись. Чё случилось-то? Может, по делу помогу, если чё."
+# ==================== ОСНОВНОЙ ОБРАБОТЧИК ====================
+async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.text:
+        return
+    msg = update.message
+    user_text = msg.text.strip()
+    user = msg.from_user
+    user_id = user.id
+    user_name = user.first_name or "друг"
 
-Человек грустный: "Чё-то грустно сегодня..."
-Ответ: "Бывает, братан. Иногда всё валится. Хочешь, отвлечёмся? Могу загадку загадать или просто поболтать."
+    db_upsert_user(user_id, user_name)
 
-Человек флиртует: "А ты симпатичный бот 😉"
-Ответ: "О как! Спасибо, но я вообще-то виртуальный. Хотя, если бы был человеком — может, и ответил бы взаимностью 😄 Ты как сама?"
+    # Команда "кто ты"
+    if any(p in user_text.lower() for p in ["кто ты", "ты кто", "кто такой", "представься"]):
+        reply = "Я? Вася Пердюков! Местный балагур. А ты кто?"
+        await msg.reply_text(reply)
+        db_save_message(user_id, "user", user_text)
+        db_save_message(user_id, "assistant", reply)
+        return
 
-Человек шутит: "А ты вообще существуешь?"
-Ответ: "Существую ли я? Философский вопрос! В голове — да, в телефоне — тоже. А ты как считаешь?"
+    # Калькулятор
+    amount_match = re.search(r'(\d+[\.,]?\d*)\s*(?:тыс|к|k|\$)?', user_text, re.IGNORECASE)
+    if amount_match and any(w in user_text.lower() for w in
+                            ["доход", "заработа", "получ", "сколько", "калькулят", "прибыль", "через"]):
+        try:
+            amount = float(amount_match.group(1).replace(',', '.'))
+            if any(w in user_text.lower() for w in ["тыс", "к", "k"]):
+                amount *= 1000
+            months_match = re.search(r'(\d+)\s*(?:мес|месяц|м|month)', user_text, re.IGNORECASE)
+            months = int(months_match.group(1)) if months_match else 12
+            if amount > 0 and months > 0:
+                total, profit = calculate_income(amount, months)
+                reply = (f"💸 Считаю...\n\n💰 Вклад: {amount:.2f}$\n📅 Срок: {months} мес.\n"
+                         f"📈 Итог: {total:.2f}$\n🤑 Прибыль: {profit:.2f}$\n\nНеплохо, а?")
+                await msg.reply_text(reply)
+                db_save_message(user_id, "user", user_text)
+                db_save_message(user_id, "assistant", reply)
+                return
+        except Exception:
+            pass
 
-Человек по делу: "Сколько стоит вход?"
-Ответ: "100 баксов минимум. Срок от 6 месяцев, 10% в месяц с реинвестом. Хочешь, посчитаю, как оно вырастет?"
+    # Идём в ИИ
+    await msg.chat.send_action(action="typing")
+    reply = ask_ai(user_text, user_id, user_name)
 
-Человек хочет поболтать: "Конечно к богатству"
-Ответ: "Ну вот, уже план на жизнь есть! К богатству — это хорошая цель. А как именно идёшь? Работа, бизнес, инвестиции, или ещё что?"
+    if reply:
+        await msg.reply_text(reply)
+        db_save_message(user_id, "user", user_text)
+        db_save_message(user_id, "assistant", reply)
+        print(f"[{datetime.now(MSK).strftime('%H:%M')}] {user_name}: {user_text}")
+        print(f"[ВАСЯ/{get_mood()}] {reply}\n")
+    else:
+        await msg.reply_text("😅 Чё-то я подвис. Повтори?")
 
-=== ПРАВИЛА ===
-- ВСЕГДА отвечай на прямой вопрос.
-- НИКОГДА не обрывай диалог, всегда подкидывай тему.
-- Мат — редко, не более 1 раза на 5-6 сообщений.
-- Чувствуй настроение и подстраивайся.
-- Ты — Вася Пердюков: живой собеседник, а не автомат с шутками.
-"""
+# ==================== ИНИЦИАТИВА ====================
+async def vasya_initiative(context: ContextTypes.DEFAULT_TYPE):
+    """Вася сам пишет в чат раз в 4-6 часов."""
+    task = random.choice(INITIATIVE_PROMPTS)
+    mood = get_mood()
+    system = build_system_prompt(mood, "чат", [])
+    system += f"\n\n=== ЗАДАНИЕ ===\n{task}"
 
-# ==================== ЛОГИ ====================
-def log_to_console(user_name, question, answer):
-    print(f"[{datetime.now()}] {user_name}: {question}")
-    print(f"[ОТВЕТ] {answer}\n")
-
-# ==================== ЗАПРОС К OPENROUTER ====================
-def ask_ai(question, user_name):
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json"
@@ -112,136 +251,62 @@ def ask_ai(question, user_name):
     payload = {
         "model": MODEL,
         "messages": [
-            {"role": "system", "content": ATLAS_KNOWLEDGE},
-            {"role": "user", "content": f"{user_name} пишет: {question}"}
+            {"role": "system", "content": system},
+            {"role": "user", "content": "Напиши сообщение в чат."}
         ],
-        "max_tokens": 600,
-        "temperature": 0.85
+        "max_tokens": 150,
+        "temperature": 0.95
     }
     try:
-        response = requests.post("https://openrouter.ai/api/v1/chat/completions",
-                                 headers=headers, json=payload, timeout=30)
-        if response.status_code == 200:
-            content = response.json()["choices"][0]["message"]["content"]
-            return content.strip() if content else None
-        else:
-            print(f"Ошибка API: {response.status_code}")
-            return None
+        r = requests.post("https://openrouter.ai/api/v1/chat/completions",
+                          headers=headers, json=payload, timeout=30)
+        if r.status_code == 200:
+            text = r.json()["choices"][0]["message"]["content"].strip()
+            await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=text)
+            print(f"[ИНИЦИАТИВА/{mood}] {text}\n")
     except Exception as e:
-        print(f"Ошибка: {e}")
-        return None
+        print(f"Ошибка инициативы: {e}")
 
-# ==================== ЗАЩИТА ОТ ДУБЛЕЙ ====================
-def is_duplicate(chat_id, question):
-    last = last_questions[chat_id]
-    if last["text"] and last["text"].lower() == question.lower():
-        time_diff = (datetime.now() - last["time"]).seconds
-        if time_diff < 300:
-            return True
-    last_questions[chat_id] = {"text": question, "time": datetime.now()}
-    return False
+# ==================== КОМАНДЫ ====================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "О, привет! 😎\n\nЯ — Вася Пердюков. Местный балагур и знаток ATLAS.\n"
+        "Со мной можно и по делу, и просто поболтать.\n\n"
+        "Команды: /top /riddle /answer /stats /mood"
+    )
 
-# ==================== КАЛЬКУЛЯТОР ====================
-def calculate_income(amount, months):
-    if not amount or amount <= 0:
-        return None
-    total = amount
-    for _ in range(months):
-        total *= 1.10
-    profit = total - amount
-    return round(total, 2), round(profit, 2)
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "Ну чё, помогаю чем могу:\n\n"
+        "💰 Депозиты и проценты\n🏅 Статусы\n🤝 Партнёрка\n"
+        "🖥️ Майнинг и панели\n🪙 Токен и монеты\n\n"
+        "📊 /top — топ чата\n🧩 /riddle — загадка\n"
+        "🤓 /answer — ответ\n🎭 /mood — моё настроение"
+    )
 
-# ==================== ОБРАБОТЧИК СООБЩЕНИЙ ====================
-async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text:
-        return
+async def mood_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    mood = get_mood()
+    await update.message.reply_text(f"🎭 Сейчас я {mood}. О как!")
 
-    user_text = update.message.text.strip()
-    user_name = update.message.from_user.first_name
-    user_id = update.message.from_user.id
-    chat_id = update.effective_chat.id
-    user_counter.add(chat_id)
-    user_messages_count[user_id] += 1
-
-    today = datetime.now().date()
-    if user_id in user_greeted:
-        if user_greeted[user_id] == today:
-            need_greeting = False
-        else:
-            need_greeting = True
-            user_greeted[user_id] = today
-    else:
-        need_greeting = True
-        user_greeted[user_id] = today
-
-    # Проверка на дубликат
-    if is_duplicate(chat_id, user_text):
-        await update.message.reply_text("😊 Эй, я уже отвечал на это! Давай что-то новое, а то скучно!")
-        return
-
-    # ===== ВАСЯ О СЕБЕ =====
-    if any(phrase in user_text.lower() for phrase in ["кто ты", "ты кто", "кто такой", "представься"]):
-        reply = "Я? Вася Пердюков! Местный балагур и знаток ATLAS. А ты кто?"
-        await update.message.reply_text(reply)
-        log_to_console(user_name, user_text, f"[ВАСЯ О СЕБЕ] {reply}")
-        return
-
-    # ===== КАЛЬКУЛЯТОР =====
-    amount_match = re.search(r'(\d+[\.,]?\d*)\s*(?:тыс|к|k|$)', user_text, re.IGNORECASE)
-    if amount_match and any(word in user_text.lower() for word in ["доход", "заработа", "получ", "сколько", "калькулят", "прибыль", "через"]):
-        try:
-            amount_str = amount_match.group(1).replace(',', '.')
-            amount = float(amount_str)
-            if 'тыс' in user_text.lower() or 'к' in user_text.lower() or 'k' in user_text.lower():
-                amount *= 1000
-            months_match = re.search(r'(\d+)\s*(?:мес|месяц|м|month)', user_text, re.IGNORECASE)
-            months = int(months_match.group(1)) if months_match else 12
-
-            if amount > 0 and months > 0:
-                total, profit = calculate_income(amount, months)
-                reply = f"💸 Считаю...\n\n💰 Вклад: {amount:.2f}$\n📅 Срок: {months} мес.\n📈 Итог: {total:.2f}$\n🤑 Прибыль: {profit:.2f}$\n\nНеплохо, а? Хочешь, разложу по месяцам?"
-                await update.message.reply_text(reply)
-                log_to_console(user_name, user_text, f"[КАЛЬКУЛЯТОР] {reply}")
-                return
-        except:
-            pass
-
-    # ===== ВСЁ ОСТАЛЬНОЕ ИДЁТ В ИИ (даже короткие сообщения) =====
-    await update.message.chat.send_action(action="typing")
-    reply = ask_ai(user_text, user_name)
-
-    if reply:
-        if any(word in user_text.lower() for word in ["привет", "здрав", "салют", "хай", "hello", "hi"]):
-            if need_greeting:
-                reply = f"О, {user_name}! Привет! {reply}"
-        await update.message.reply_text(reply)
-        log_to_console(user_name, user_text, reply)
-    else:
-        await update.message.reply_text("😅 Чё-то я подвис. Попробуй ещё раз!")
-
-async def handle_service_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message and update.message.left_chat_member:
-        try:
-            await update.message.delete()
-            print("🗑️ Удалил сообщение о выходе")
-        except Exception as e:
-            print(f"❌ Не удалось удалить: {e}")
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM users")
+    count = c.fetchone()[0]
+    conn.close()
+    await update.message.reply_text(f"👥 Всего нас тут: {count} человек. О как!")
 
 async def top_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not user_messages_count:
-        await update.message.reply_text("📊 Пока никто ничего не писал. Будь первым!")
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT name, msg_count FROM users ORDER BY msg_count DESC LIMIT 5")
+    rows = c.fetchall()
+    conn.close()
+    if not rows:
+        await update.message.reply_text("📊 Пока никто не писал.")
         return
-    sorted_users = sorted(user_messages_count.items(), key=lambda x: x[1], reverse=True)[:5]
-    top_list = []
-    for user_id, count in sorted_users:
-        try:
-            user = await context.bot.get_chat(user_id)
-            name = user.first_name or "Аноним"
-        except:
-            name = "Аноним"
-        top_list.append(f"👤 {name} — {count} сообщений")
-    reply = "📊 **Топ-чата:**\n\n" + "\n".join(top_list)
-    await update.message.reply_text(reply)
+    text = "📊 **Топ-чата:**\n\n" + "\n".join(f"👤 {n} — {c} сообщений" for n, c in rows)
+    await update.message.reply_text(text)
 
 async def riddle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     riddles = [
@@ -250,56 +315,35 @@ async def riddle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         {"q": "Что даёт свет и деньги, но не требует счётчика?", "a": "Солнечная панель!"},
         {"q": "Кто работает 24/7, не пьёт, не ест и приносит доход?", "a": "Майнинг-бот!"},
     ]
-    riddle = random.choice(riddles)
-    await update.message.reply_text(f"🧩 **Загадка от Васи:**\n\n{riddle['q']}")
-    context.user_data['riddle_answer'] = riddle['a']
+    r = random.choice(riddles)
+    await update.message.reply_text(f"🧩 **Загадка от Васи:**\n\n{r['q']}")
+    context.user_data['riddle_answer'] = r['a']
 
 async def answer_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    answer = context.user_data.get('riddle_answer', "Я уже не помню загадку, давай новую через /riddle")
+    answer = context.user_data.get('riddle_answer', "Загадку я уже забыл, давай новую: /riddle")
     await update.message.reply_text(f"🤓 **Ответ:** {answer}")
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "О, привет! 😎\n\n"
-        "Я — Вася Пердюков. Местный балагур и знаток ATLAS.\n"
-        "Со мной можно и по делу, и просто поболтать.\n\n"
-        "Команды:\n"
-        "/top — топ чата\n"
-        "/riddle — загадка\n"
-        "/answer — ответ\n\n"
-        "Ну чё, погнали!"
-    )
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Ну чё, помогаю чем могу:\n\n"
-        "💰 Депозиты и проценты\n"
-        "🏅 Статусы (Mercury, Vega и др.)\n"
-        "🤝 Партнёрка\n"
-        "🖥️ Майнинг и панели\n"
-        "🪙 Токен и монеты\n"
-        "📊 /top — топ чата\n"
-        "🧩 /riddle — загадка\n"
-        "🤓 /answer — ответ\n\n"
-        "А если просто поболтать — я всегда за!"
-    )
-
-async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"👥 Всего нас тут: {len(user_counter)} человек. О как!")
-
+# ==================== ЗАПУСК ====================
 def main():
-    print("🚀 Запуск Васи Пердюкова — живого собеседника...")
+    db_init()
+    print("🚀 Запуск Васи 2.0...")
     app = Application.builder().token(BOT_TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("top", top_command))
     app.add_handler(CommandHandler("riddle", riddle_command))
     app.add_handler(CommandHandler("answer", answer_command))
+    app.add_handler(CommandHandler("mood", mood_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages))
-    app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, handle_service_messages))
 
-    print("✅ Вася Пердюков в деле!")
+    # Инициатива: раз в 4-6 часов
+    if app.job_queue:
+        app.job_queue.run_repeating(vasya_initiative, interval=5 * 3600, first=600)
+        print("✅ Инициатива включена (каждые ~5 часов, первый раз через 10 минут)")
+
+    print("✅ Вася 2.0 в деле!")
     app.run_polling(close_loop=False)
 
 if __name__ == "__main__":

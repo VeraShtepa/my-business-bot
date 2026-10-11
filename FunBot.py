@@ -17,7 +17,7 @@ from prompt import build_system_prompt, MOODS, INITIATIVE_PROMPTS
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 GROUP_CHAT_ID = int(os.getenv("GROUP_CHAT_ID", "-1003835539142"))  # Вася пишет сюда сам
-MODEL = "openai/gpt-4o-mini"
+MODEL = "cognitivecomputations/dolphin-mistral-24b-venice-edition:free"
 MSK = ZoneInfo("Europe/Moscow")
 DB_PATH = os.getenv("DB_PATH", "vasya.db")
 
@@ -78,7 +78,7 @@ def db_add_fact(user_id, fact):
         fact_list = [f for f in facts.split("|") if f]
         if fact not in fact_list:
             fact_list.append(fact)
-            fact_list = fact_list[-10:]  # храним последние 10 фактов
+            fact_list = fact_list[-10:]
         c.execute("UPDATE users SET facts=? WHERE user_id=?", ("|".join(fact_list), user_id))
     conn.commit()
     conn.close()
@@ -96,7 +96,6 @@ def db_save_message(user_id, role, content):
     c = conn.cursor()
     c.execute("INSERT INTO history (user_id, role, content, ts) VALUES (?, ?, ?, ?)",
               (user_id, role, content, datetime.now(MSK).isoformat()))
-    # Чистим старые, оставляем 30 последних на юзера
     c.execute("""DELETE FROM history WHERE id NOT IN (
         SELECT id FROM history WHERE user_id=? ORDER BY id DESC LIMIT 30
     ) AND user_id=?""", (user_id, user_id))
@@ -146,7 +145,6 @@ def ask_ai(question, user_id, user_name, extra_system=None):
     if extra_system:
         system = extra_system + "\n\n" + system
 
-    # История диалога
     history = db_get_history(user_id, limit=10)
     messages = [{"role": "system", "content": system}]
     for role, content in history:
@@ -194,7 +192,6 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     db_upsert_user(user_id, user_name)
 
-    # Команда "кто ты"
     if any(p in user_text.lower() for p in ["кто ты", "ты кто", "кто такой", "представься"]):
         reply = "Я? Вася Пердюков! Местный балагур. А ты кто?"
         await msg.reply_text(reply)
@@ -202,7 +199,6 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
         db_save_message(user_id, "assistant", reply)
         return
 
-    # Калькулятор
     amount_match = re.search(r'(\d+[\.,]?\d*)\s*(?:тыс|к|k|\$)?', user_text, re.IGNORECASE)
     if amount_match and any(w in user_text.lower() for w in
                             ["доход", "заработа", "получ", "сколько", "калькулят", "прибыль", "через"]):
@@ -223,7 +219,6 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
         except Exception:
             pass
 
-    # Идём в ИИ
     await msg.chat.send_action(action="typing")
     reply = ask_ai(user_text, user_id, user_name)
 
@@ -238,7 +233,6 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 # ==================== ИНИЦИАТИВА ====================
 async def vasya_initiative(context: ContextTypes.DEFAULT_TYPE):
-    """Вася сам пишет в чат раз в 4-6 часов."""
     task = random.choice(INITIATIVE_PROMPTS)
     mood = get_mood()
     system = build_system_prompt(mood, "чат", [])
@@ -338,7 +332,6 @@ def main():
     app.add_handler(CommandHandler("mood", mood_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages))
 
-    # Инициатива: раз в 4-6 часов
     if app.job_queue:
         app.job_queue.run_repeating(vasya_initiative, interval=5 * 3600, first=600)
         print("✅ Инициатива включена (каждые ~5 часов, первый раз через 10 минут)")

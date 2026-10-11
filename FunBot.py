@@ -1,4 +1,4 @@
-# FunBot.py — Вася Пердюков 2.0
+# FunBot.py — Вася Пердюков 3.0
 import os
 import random
 import sqlite3
@@ -16,7 +16,7 @@ from prompt import build_system_prompt, MOODS, INITIATIVE_PROMPTS
 # ==================== НАСТРОЙКИ ====================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-GROUP_CHAT_ID = int(os.getenv("GROUP_CHAT_ID", "-1003835539142"))  # Вася пишет сюда сам
+GROUP_CHAT_ID = int(os.getenv("GROUP_CHAT_ID", "-1003835539142"))
 MODEL = "cognitivecomputations/dolphin-mistral-24b-venice-edition"
 MSK = ZoneInfo("Europe/Moscow")
 DB_PATH = os.getenv("DB_PATH", "vasya.db")
@@ -158,8 +158,8 @@ def ask_ai(question, user_id, user_name, extra_system=None):
     payload = {
         "model": MODEL,
         "messages": messages,
-        "max_tokens": 250,
-        "temperature": 0.95
+        "max_tokens": 200,
+        "temperature": 0.9
     }
     try:
         r = requests.post("https://openrouter.ai/api/v1/chat/completions",
@@ -229,11 +229,12 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
         print(f"[{datetime.now(MSK).strftime('%H:%M')}] {user_name}: {user_text}")
         print(f"[ВАСЯ/{get_mood()}] {reply}\n")
     else:
-        await msg.reply_text("😅 Чё-то я подвис. Повтори?")
+        await msg.reply_text("Слушай, я чё-то завис. Повтори ещё раз.")
 
-# ==================== ИНИЦИАТИВА ====================
+# ==================== ИНИЦИАТИВА (ОТКЛЮЧЕНА) ====================
 async def vasya_initiative(context: ContextTypes.DEFAULT_TYPE):
-    task = random.choice(INITIATIVE_PROMPTS)
+    """Вася сам пишет в чат. Сейчас отключено."""
+    task = random.choice(INITIATIVE_PROMPTS) if INITIATIVE_PROMPTS else "Напиши что-нибудь в чат."
     mood = get_mood()
     system = build_system_prompt(mood, "чат", [])
     system += f"\n\n=== ЗАДАНИЕ ===\n{task}"
@@ -249,7 +250,7 @@ async def vasya_initiative(context: ContextTypes.DEFAULT_TYPE):
             {"role": "user", "content": "Напиши сообщение в чат."}
         ],
         "max_tokens": 150,
-        "temperature": 0.95
+        "temperature": 0.9
     }
     try:
         r = requests.post("https://openrouter.ai/api/v1/chat/completions",
@@ -264,7 +265,7 @@ async def vasya_initiative(context: ContextTypes.DEFAULT_TYPE):
 # ==================== КОМАНДЫ ====================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "О, привет! 😎\n\nЯ — Вася Пердюков. Местный балагур и знаток ATLAS.\n"
+        "О, привет! Я — Вася Пердюков. Местный балагур.\n"
         "Со мной можно и по делу, и просто поболтать.\n\n"
         "Команды: /top /riddle /answer /stats /mood"
     )
@@ -272,15 +273,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Ну чё, помогаю чем могу:\n\n"
-        "💰 Депозиты и проценты\n🏅 Статусы\n🤝 Партнёрка\n"
-        "🖥️ Майнинг и панели\n🪙 Токен и монеты\n\n"
         "📊 /top — топ чата\n🧩 /riddle — загадка\n"
         "🤓 /answer — ответ\n🎭 /mood — моё настроение"
     )
 
 async def mood_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mood = get_mood()
-    await update.message.reply_text(f"🎭 Сейчас я {mood}. О как!")
+    await update.message.reply_text(f"🎭 Сейчас я {mood}.")
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect(DB_PATH)
@@ -288,7 +287,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     c.execute("SELECT COUNT(*) FROM users")
     count = c.fetchone()[0]
     conn.close()
-    await update.message.reply_text(f"👥 Всего нас тут: {count} человек. О как!")
+    await update.message.reply_text(f"👥 Всего нас тут: {count} человек.")
 
 async def top_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect(DB_PATH)
@@ -320,7 +319,7 @@ async def answer_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==================== ЗАПУСК ====================
 def main():
     db_init()
-    print("🚀 Запуск Васи 2.0...")
+    print("🚀 Запуск Васи 3.0...")
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -332,11 +331,12 @@ def main():
     app.add_handler(CommandHandler("mood", mood_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages))
 
-    if app.job_queue:
-        app.job_queue.run_repeating(vasya_initiative, interval=5 * 3600, first=600)
-        print("✅ Инициатива включена (каждые ~5 часов, первый раз через 10 минут)")
+    # Инициатива отключена — Вася только отвечает
+    # if app.job_queue:
+    #     app.job_queue.run_repeating(vasya_initiative, interval=5 * 3600, first=600)
+    #     print("✅ Инициатива включена (каждые ~5 часов, первый раз через 10 минут)")
 
-    print("✅ Вася 2.0 в деле!")
+    print("✅ Вася 3.0 в деле!")
     app.run_polling(close_loop=False)
 
 if __name__ == "__main__":

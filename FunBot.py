@@ -17,7 +17,7 @@ from prompt import build_system_prompt, MOODS, INITIATIVE_PROMPTS
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 GROUP_CHAT_ID = int(os.getenv("GROUP_CHAT_ID", "-1003835539142"))
-MODEL = "cognitivecomputations/dolphin-mixtral-8x22b"
+MODEL = "thedrummer/cydonia-24b-v4.1"
 MSK = ZoneInfo("Europe/Moscow")
 DB_PATH = os.getenv("DB_PATH", "vasya.db")
 

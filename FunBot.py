@@ -4,6 +4,7 @@ import random
 import sqlite3
 import requests
 import re
+import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from telegram import Update
@@ -23,6 +24,28 @@ DB_PATH = os.getenv("DB_PATH", "vasya.db")
 
 if not BOT_TOKEN or not OPENROUTER_API_KEY:
     raise ValueError("❌ BOT_TOKEN или OPENROUTER_API_KEY не найдены!")
+
+# ==================== ЗАГЛУШКИ НА СЛУЧАЙ ОШИБКИ API ====================
+FALLBACK_REPLIES = [
+    "Погоди, в дверь звонят, вернусь щас.",
+    "Секунду, у меня звонок. Не теряйся.",
+    "Ой, отвлёкся. Что ты сказал?",
+    "Слушай, у меня тут дела на пару минут. Напиши ещё раз попозже.",
+    "Блин, чайник закипел. Секунду.",
+    "Я тут, но не могу сейчас — освобожусь, отвечу.",
+    "Погоди, я кое-что делаю. Через минуту.",
+    "Ой, меня отвлекли. Повтори, пожалуйста.",
+    "Секунду, у меня тут важное. Не убегай.",
+    "Слушай, у меня тут суета. Напиши что-нибудь ещё, а я отвечу.",
+    "Погоди, кот на клавиатуру прыгнул. Сейчас вернусь.",
+    "Секунд десять, я тут разбираюсь с одним делом.",
+    "Ой, извини, задумался. О чём ты?",
+    "Погоди, я тут с соседом разговариваю. Секунду.",
+    "Слушай, я тут немного занят. Не пропадай.",
+    "Блин, телефон звонит. Перезвоню — отвечу.",
+    "Секунду, я тут руки мою. Сейчас.",
+    "Ой, у меня тут дела нарисовались. Погоди чуток.",
+]
 
 # ==================== БАЗА ДАННЫХ ====================
 def db_init():
@@ -137,7 +160,28 @@ def get_mood():
         return mood
     return db_get_state("mood", "бодрый")
 
-# ==================== ЗАПРОС К ИИ ====================
+# ==================== ЗАПРОС К ИИ (С ПОВТОРАМИ) ====================
+def _post_with_retry(url, headers, payload, max_retries=3):
+    """Отправляет запрос к OpenRouter. При 429/5xx — ждёт и пробует снова."""
+    delays = [2, 4, 6]
+    for attempt in range(max_retries):
+        try:
+            r = requests.post(url, headers=headers, json=payload, timeout=30)
+            if r.status_code == 200:
+                return r
+            if r.status_code in (429, 500, 502, 503, 504):
+                wait = delays[attempt] if attempt < len(delays) else 6
+                print(f"API {r.status_code} — попытка {attempt+1}/{max_retries}, ждём {wait} сек...")
+                time.sleep(wait)
+                continue
+            print(f"API error: {r.status_code} — {r.text[:200]}")
+            return r
+        except Exception as e:
+            print(f"Exception (попытка {attempt+1}): {e}")
+            time.sleep(2)
+    return None
+
+
 def ask_ai(question, user_id, user_name, extra_system=None):
     mood = get_mood()
     facts = db_get_facts(user_id)
@@ -159,19 +203,14 @@ def ask_ai(question, user_id, user_name, extra_system=None):
         "model": MODEL,
         "messages": messages,
         "max_tokens": 200,
-        "temperature": 0.9
+        "temperature": 0.75
     }
-    try:
-        r = requests.post("https://openrouter.ai/api/v1/chat/completions",
-                          headers=headers, json=payload, timeout=30)
-        if r.status_code == 200:
-            content = r.json()["choices"][0]["message"]["content"]
-            return content.strip() if content else None
-        print(f"API error: {r.status_code} — {r.text[:200]}")
-        return None
-    except Exception as e:
-        print(f"Exception: {e}")
-        return None
+    r = _post_with_retry("https://openrouter.ai/api/v1/chat/completions",
+                         headers, payload)
+    if r is not None and r.status_code == 200:
+        content = r.json()["choices"][0]["message"]["content"]
+        return content.strip() if content else None
+    return None
 
 # ==================== КАЛЬКУЛЯТОР ====================
 def calculate_income(amount, months):
@@ -229,7 +268,9 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
         print(f"[{datetime.now(MSK).strftime('%H:%M')}] {user_name}: {user_text}")
         print(f"[ВАСЯ/{get_mood()}] {reply}\n")
     else:
-        await msg.reply_text("Слушай, я чё-то завис. Повтори ещё раз.")
+        fallback = random.choice(FALLBACK_REPLIES)
+        await msg.reply_text(fallback)
+        print(f"[FALLBACK] {fallback}")
 
 # ==================== ИНИЦИАТИВА (ОТКЛЮЧЕНА) ====================
 async def vasya_initiative(context: ContextTypes.DEFAULT_TYPE):
@@ -250,36 +291,35 @@ async def vasya_initiative(context: ContextTypes.DEFAULT_TYPE):
             {"role": "user", "content": "Напиши сообщение в чат."}
         ],
         "max_tokens": 150,
-        "temperature": 0.9
+        "temperature": 0.75
     }
-    try:
-        r = requests.post("https://openrouter.ai/api/v1/chat/completions",
-                          headers=headers, json=payload, timeout=30)
-        if r.status_code == 200:
-            text = r.json()["choices"][0]["message"]["content"].strip()
-            await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=text)
-            print(f"[ИНИЦИАТИВА/{mood}] {text}\n")
-    except Exception as e:
-        print(f"Ошибка инициативы: {e}")
+    r = _post_with_retry("https://openrouter.ai/api/v1/chat/completions",
+                         headers, payload)
+    if r is not None and r.status_code == 200:
+        text = r.json()["choices"][0]["message"]["content"].strip()
+        await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=text)
+        print(f"[ИНИЦИАТИВА/{mood}] {text}\n")
 
 # ==================== КОМАНДЫ ====================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "О, привет! Я — Вася Пердюков. Местный балагур.\n"
         "Со мной можно и по делу, и просто поболтать.\n\n"
-        "Команды: /top /riddle /answer /stats /mood"
+        "Команды: /top /riddle /answer /stats /mood",
+        parse_mode="Markdown"
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Ну чё, помогаю чем могу:\n\n"
         "📊 /top — топ чата\n🧩 /riddle — загадка\n"
-        "🤓 /answer — ответ\n🎭 /mood — моё настроение"
+        "🤓 /answer — ответ\n🎭 /mood — моё настроение",
+        parse_mode="Markdown"
     )
 
 async def mood_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mood = get_mood()
-    await update.message.reply_text(f"🎭 Сейчас я {mood}.")
+    await update.message.reply_text(f"🎭 Сейчас я *{mood}*.", parse_mode="Markdown")
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect(DB_PATH)
@@ -287,7 +327,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     c.execute("SELECT COUNT(*) FROM users")
     count = c.fetchone()[0]
     conn.close()
-    await update.message.reply_text(f"👥 Всего нас тут: {count} человек.")
+    await update.message.reply_text(f"👥 Всего нас тут: *{count}* человек.", parse_mode="Markdown")
 
 async def top_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect(DB_PATH)
@@ -298,8 +338,8 @@ async def top_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not rows:
         await update.message.reply_text("📊 Пока никто не писал.")
         return
-    text = "📊 **Топ-чата:**\n\n" + "\n".join(f"👤 {n} — {c} сообщений" for n, c in rows)
-    await update.message.reply_text(text)
+    text = "📊 *Топ-чата:*\n\n" + "\n".join(f"👤 {n} — {c} сообщений" for n, c in rows)
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 async def riddle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     riddles = [
@@ -309,12 +349,12 @@ async def riddle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         {"q": "Кто работает 24/7, не пьёт, не ест и приносит доход?", "a": "Майнинг-бот!"},
     ]
     r = random.choice(riddles)
-    await update.message.reply_text(f"🧩 **Загадка от Васи:**\n\n{r['q']}")
+    await update.message.reply_text(f"🧩 *Загадка от Васи:*\n\n{r['q']}", parse_mode="Markdown")
     context.user_data['riddle_answer'] = r['a']
 
 async def answer_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     answer = context.user_data.get('riddle_answer', "Загадку я уже забыл, давай новую: /riddle")
-    await update.message.reply_text(f"🤓 **Ответ:** {answer}")
+    await update.message.reply_text(f"🤓 *Ответ:* {answer}", parse_mode="Markdown")
 
 # ==================== ЗАПУСК ====================
 def main():

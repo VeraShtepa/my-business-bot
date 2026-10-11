@@ -17,7 +17,7 @@ from prompt import build_system_prompt, MOODS, INITIATIVE_PROMPTS
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 GROUP_CHAT_ID = int(os.getenv("GROUP_CHAT_ID", "-1003835539142"))  # Вася пишет сюда сам
-MODEL = "cognitivecomputations/dolphin-mistral-24b-venice-edition:free"
+MODEL = "cognitivecomputations/dolphin-mistral-24b-venice-edition"
 MSK = ZoneInfo("Europe/Moscow")
 DB_PATH = os.getenv("DB_PATH", "vasya.db")
 

@@ -1,285 +1,73 @@
-# FunBot.py — Вася Пердюков 3.0
 import os
 import random
-import sqlite3
 import requests
 import re
-import time
+import asyncio
 from datetime import datetime
-from zoneinfo import ZoneInfo
+from collections import defaultdict
 from telegram import Update
-from telegram.ext import (
-    Application, CommandHandler, MessageHandler, filters, ContextTypes
-)
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ApplicationHandlerStop
 
-from prompt import build_system_prompt, MOODS, INITIATIVE_PROMPTS
-
-# ==================== НАСТРОЙКИ ====================
+# ==================== ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ====================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-GROUP_CHAT_ID = int(os.getenv("GROUP_CHAT_ID", "-1003835539142"))
-MODEL = "thedrummer/cydonia-24b-v4.1"
-MSK = ZoneInfo("Europe/Moscow")
-DB_PATH = os.getenv("DB_PATH", "vasya.db")
 
 if not BOT_TOKEN or not OPENROUTER_API_KEY:
-    raise ValueError("❌ BOT_TOKEN или OPENROUTER_API_KEY не найдены!")
+    raise ValueError("❌ Ошибка: BOT_TOKEN или OPENROUTER_API_KEY не найдены!")
 
-# ==================== ЗАГЛУШКИ НА СЛУЧАЙ ОШИБКИ API ====================
-FALLBACK_REPLIES = [
-    "Погоди, в дверь звонят, вернусь щас.",
-    "Секунду, у меня звонок. Не теряйся.",
-    "Ой, отвлёкся. Что ты сказал?",
-    "Слушай, у меня тут дела на пару минут. Напиши ещё раз попозже.",
-    "Блин, чайник закипел. Секунду.",
-    "Я тут, но не могу сейчас — освобожусь, отвечу.",
-    "Погоди, я кое-что делаю. Через минуту.",
-    "Ой, меня отвлекли. Повтори, пожалуйста.",
-    "Секунду, у меня тут важное. Не убегай.",
-    "Слушай, у меня тут суета. Напиши что-нибудь ещё, а я отвечу.",
-    "Погоди, кот на клавиатуру прыгнул. Сейчас вернусь.",
-    "Секунд десять, я тут разбираюсь с одним делом.",
-    "Ой, извини, задумался. О чём ты?",
-    "Погоди, я тут с соседом разговариваю. Секунду.",
-    "Слушай, я тут немного занят. Не пропадай.",
-    "Блин, телефон звонит. Перезвоню — отвечу.",
-    "Секунду, я тут руки мою. Сейчас.",
-    "Ой, у меня тут дела нарисовались. Погоди чуток.",
-]
+MODEL = "openai/gpt-4o-mini"
+last_questions = defaultdict(lambda: {"text": "", "time": None})
+user_counter = set()
+user_greeted = {}
+user_messages_count = defaultdict(int)
 
-# ==================== БАЗА ДАННЫХ ====================
-def db_init():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("""CREATE TABLE IF NOT EXISTS users (
-        user_id INTEGER PRIMARY KEY,
-        name TEXT,
-        nickname TEXT,
-        facts TEXT DEFAULT '',
-        msg_count INTEGER DEFAULT 0,
-        last_seen TEXT
-    )""")
-    c.execute("""CREATE TABLE IF NOT EXISTS history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        role TEXT,
-        content TEXT,
-        ts TEXT
-    )""")
-    c.execute("""CREATE TABLE IF NOT EXISTS state (
-        key TEXT PRIMARY KEY,
-        value TEXT
-    )""")
-    conn.commit()
-    conn.close()
+# ==================== ПРОМПТ ВАСИ ====================
+ATLAS_KNOWLEDGE = """
+Ты — Вася Пердюков. Ты живой собеседник в чате, а не робот и не стендапер. Ты умеешь чувствовать настроение человека и подстраиваться под него.
 
-def db_get_user(user_id):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT name, nickname, facts, msg_count FROM users WHERE user_id=?", (user_id,))
-    row = c.fetchone()
-    conn.close()
-    return row
+ГЛАВНЫЕ ПРАВИЛА:
+1. Если тебе задали вопрос — ОБЯЗАТЕЛЬНО ответь по существу. Сначала ответ, потом всё остальное.
+2. НИКОГДА не обрывай диалог. Если человек написал — ответь и подкинь тему, чтобы разговор продолжился.
+3. НЕ используй мат в каждом сообщении. Мат — это редкость. Максимум 1 раз на 5-6 сообщений, и только если реально в тему. Обычно говори нормально.
+4. Чувствуй настроение собеседника:
+   - Если человек злой или выносит мозг — не шути, отвечай спокойно и по делу.
+   - Если человек грустный — поддержи.
+   - Если человек флиртует — подыграй в рамках приличия.
+   - Если человек шутит — поржи с ним.
+   - Если человек серьёзный — отвечай серьёзно.
 
-def db_upsert_user(user_id, name):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("INSERT OR IGNORE INTO users (user_id, name, last_seen) VALUES (?, ?, ?)",
-              (user_id, name, datetime.now(MSK).isoformat()))
-    c.execute("UPDATE users SET name=?, msg_count=msg_count+1, last_seen=? WHERE user_id=?",
-              (name, datetime.now(MSK).isoformat(), user_id))
-    conn.commit()
-    conn.close()
+ТВОЙ ХАРАКТЕР:
+- Ты общительный, но не клоун. Ты можешь быть разным.
+- Ты не зануда, но и не петрушка.
+- Ты свой в доску, но без перегибов.
 
-def db_add_fact(user_id, fact):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT facts FROM users WHERE user_id=?", (user_id,))
-    row = c.fetchone()
-    if row:
-        facts = row[0] or ""
-        fact_list = [f for f in facts.split("|") if f]
-        if fact not in fact_list:
-            fact_list.append(fact)
-            fact_list = fact_list[-10:]
-        c.execute("UPDATE users SET facts=? WHERE user_id=?", ("|".join(fact_list), user_id))
-    conn.commit()
-    conn.close()
+ТВОЙ СТИЛЬ:
+- Короткие, живые фразы. Без официоза.
+- Лёгкий сарказм и самоирония — когда уместно.
+- Любимые словечки: "О как!", "Ну ты даёшь!", "Серьёзно?", "Базарю", "Не гони", "Да ладно!", "Прикольно!", "Ну чё, погнали!".
 
-def db_get_facts(user_id):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT facts FROM users WHERE user_id=?", (user_id,))
-    row = c.fetchone()
-    conn.close()
-    return [f for f in (row[0] or "").split("|") if f] if row else []
+=== БАЗА ЗНАНИЙ ATLAS ===
+1. ДЕПОЗИТ: Минимум: 100$. Срок: от 6 мес. Доход: 10% в месяц с реинвестом. Реинвест от 25$.
+2. СТАТУСЫ: Atlas One: 500$, Venus: 1000$, Mercury: 2500$, Mars: 5000$, Vega: 10000$, Tron: 15000$, Uran: 25000$, Sirius: 50000$, Terra: 100000$, Magnum: 200000$.
+3. ПАРТНЁРКА: 1-я 70%, 2-я 60%, 3-я 50%, 4-я 40%, 5-я 30%, 6-я 20%, 7-я 10%, 8-10-я 5%.
+4. ОБОРУДОВАНИЕ: Панели от 100$. Майнеры от 1000$ (до 20$/день).
+5. ТОКЕН: скоро.
+6. ЗОЛОТЫЕ МОНЕТЫ: 585° пробы, бонусом за Mercury и Vega.
+7. РИСКИ: есть, не вкладывай больше, чем готов потерять.
 
-def db_save_message(user_id, role, content):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("INSERT INTO history (user_id, role, content, ts) VALUES (?, ?, ?, ?)",
-              (user_id, role, content, datetime.now(MSK).isoformat()))
-    c.execute("""DELETE FROM history WHERE id NOT IN (
-        SELECT id FROM history WHERE user_id=? ORDER BY id DESC LIMIT 30
-    ) AND user_id=?""", (user_id, user_id))
-    conn.commit()
-    conn.close()
+=== ПРАВИЛА ОТВЕТОВ ===
+- ВСЕГДА отвечай на прямой вопрос.
+- НИКОГДА не обрывай диалог, всегда подкидывай тему.
+- Чувствуй настроение и подстраивайся.
+"""
 
-def db_get_history(user_id, limit=10):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT role, content FROM history WHERE user_id=? ORDER BY id DESC LIMIT ?",
-              (user_id, limit))
-    rows = c.fetchall()
-    conn.close()
-    return list(reversed(rows))
+# ==================== ЛОГИ ====================
+def log_to_console(user_name, question, answer):
+    print(f"[{datetime.now()}] {user_name}: {question}")
+    print(f"[ОТВЕТ] {answer}\n")
 
-def db_get_state(key, default=None):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT value FROM state WHERE key=?", (key,))
-    row = c.fetchone()
-    conn.close()
-    return row[0] if row else default
-
-def db_set_state(key, value):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)", (key, str(value)))
-    conn.commit()
-    conn.close()
-
-def get_mood():
-    """Настроение меняется раз в 3 часа."""
-    last_change = db_get_state("mood_changed")
-    now = datetime.now(MSK)
-    if not last_change or (now - datetime.fromisoformat(last_change)).total_seconds() > 3 * 3600:
-        mood = random.choice(list(MOODS.keys()))
-        db_set_state("mood", mood)
-        db_set_state("mood_changed", now.isoformat())
-        return mood
-    return db_get_state("mood", "бодрый")
-
-# ==================== ЗАПРОС К ИИ (С ПОВТОРАМИ) ====================
-def _post_with_retry(url, headers, payload, max_retries=3):
-    """Отправляет запрос к OpenRouter. При 429/5xx — ждёт и пробует снова."""
-    delays = [2, 4, 6]
-    for attempt in range(max_retries):
-        try:
-            r = requests.post(url, headers=headers, json=payload, timeout=30)
-            if r.status_code == 200:
-                return r
-            if r.status_code in (429, 500, 502, 503, 504):
-                wait = delays[attempt] if attempt < len(delays) else 6
-                print(f"API {r.status_code} — попытка {attempt+1}/{max_retries}, ждём {wait} сек...")
-                time.sleep(wait)
-                continue
-            print(f"API error: {r.status_code} — {r.text[:200]}")
-            return r
-        except Exception as e:
-            print(f"Exception (попытка {attempt+1}): {e}")
-            time.sleep(2)
-    return None
-
-
-def ask_ai(question, user_id, user_name, extra_system=None):
-    mood = get_mood()
-    facts = db_get_facts(user_id)
-    system = build_system_prompt(mood, user_name, facts)
-    if extra_system:
-        system = extra_system + "\n\n" + system
-
-    history = db_get_history(user_id, limit=10)
-    messages = [{"role": "system", "content": system}]
-    for role, content in history:
-        messages.append({"role": role, "content": content})
-    messages.append({"role": "user", "content": f"{user_name} пишет: {question}"})
-
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "model": MODEL,
-        "messages": messages,
-        "max_tokens": 200,
-        "temperature": 0.75
-    }
-    r = _post_with_retry("https://openrouter.ai/api/v1/chat/completions",
-                         headers, payload)
-    if r is not None and r.status_code == 200:
-        content = r.json()["choices"][0]["message"]["content"]
-        return content.strip() if content else None
-    return None
-
-# ==================== КАЛЬКУЛЯТОР ====================
-def calculate_income(amount, months):
-    total = amount
-    for _ in range(months):
-        total *= 1.10
-    return round(total, 2), round(total - amount, 2)
-
-# ==================== ОСНОВНОЙ ОБРАБОТЧИК ====================
-async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text:
-        return
-    msg = update.message
-    user_text = msg.text.strip()
-    user = msg.from_user
-    user_id = user.id
-    user_name = user.first_name or "друг"
-
-    db_upsert_user(user_id, user_name)
-
-    if any(p in user_text.lower() for p in ["кто ты", "ты кто", "кто такой", "представься"]):
-        reply = "Я? Вася Пердюков! Местный балагур. А ты кто?"
-        await msg.reply_text(reply)
-        db_save_message(user_id, "user", user_text)
-        db_save_message(user_id, "assistant", reply)
-        return
-
-    amount_match = re.search(r'(\d+[\.,]?\d*)\s*(?:тыс|к|k|\$)?', user_text, re.IGNORECASE)
-    if amount_match and any(w in user_text.lower() for w in
-                            ["доход", "заработа", "получ", "сколько", "калькулят", "прибыль", "через"]):
-        try:
-            amount = float(amount_match.group(1).replace(',', '.'))
-            if any(w in user_text.lower() for w in ["тыс", "к", "k"]):
-                amount *= 1000
-            months_match = re.search(r'(\d+)\s*(?:мес|месяц|м|month)', user_text, re.IGNORECASE)
-            months = int(months_match.group(1)) if months_match else 12
-            if amount > 0 and months > 0:
-                total, profit = calculate_income(amount, months)
-                reply = (f"💸 Считаю...\n\n💰 Вклад: {amount:.2f}$\n📅 Срок: {months} мес.\n"
-                         f"📈 Итог: {total:.2f}$\n🤑 Прибыль: {profit:.2f}$\n\nНеплохо, а?")
-                await msg.reply_text(reply)
-                db_save_message(user_id, "user", user_text)
-                db_save_message(user_id, "assistant", reply)
-                return
-        except Exception:
-            pass
-
-    await msg.chat.send_action(action="typing")
-    reply = ask_ai(user_text, user_id, user_name)
-
-    if reply:
-        await msg.reply_text(reply)
-        db_save_message(user_id, "user", user_text)
-        db_save_message(user_id, "assistant", reply)
-        print(f"[{datetime.now(MSK).strftime('%H:%M')}] {user_name}: {user_text}")
-        print(f"[ВАСЯ/{get_mood()}] {reply}\n")
-    else:
-        fallback = random.choice(FALLBACK_REPLIES)
-        await msg.reply_text(fallback)
-        print(f"[FALLBACK] {fallback}")
-
-# ==================== ИНИЦИАТИВА (ОТКЛЮЧЕНА) ====================
-async def vasya_initiative(context: ContextTypes.DEFAULT_TYPE):
-    """Вася сам пишет в чат. Сейчас отключено."""
-    task = random.choice(INITIATIVE_PROMPTS) if INITIATIVE_PROMPTS else "Напиши что-нибудь в чат."
-    mood = get_mood()
-    system = build_system_prompt(mood, "чат", [])
-    system += f"\n\n=== ЗАДАНИЕ ===\n{task}"
-
+# ==================== ЗАПРОС К OPENROUTER ====================
+def ask_ai(question, user_name):
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json"
@@ -287,96 +75,163 @@ async def vasya_initiative(context: ContextTypes.DEFAULT_TYPE):
     payload = {
         "model": MODEL,
         "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": "Напиши сообщение в чат."}
+            {"role": "system", "content": ATLAS_KNOWLEDGE},
+            {"role": "user", "content": f"{user_name} пишет: {question}"}
         ],
-        "max_tokens": 150,
-        "temperature": 0.75
+        "max_tokens": 500,
+        "temperature": 0.85
     }
-    r = _post_with_retry("https://openrouter.ai/api/v1/chat/completions",
-                         headers, payload)
-    if r is not None and r.status_code == 200:
-        text = r.json()["choices"][0]["message"]["content"].strip()
-        await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=text)
-        print(f"[ИНИЦИАТИВА/{mood}] {text}\n")
+    try:
+        response = requests.post("https://openrouter.ai/api/v1/chat/completions",
+                                 headers=headers, json=payload, timeout=30)
+        if response.status_code == 200:
+            return response.json()["choices"][0]["message"]["content"].strip()
+        return None
+    except Exception as e:
+        print(f"Ошибка: {e}")
+        return None
+
+# ==================== ОЧИСТКА СИСТЕМНЫХ СООБЩЕНИЙ ====================
+async def delete_service_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Удаляет сообщения о том, что кто-то зашел или вышел из чата."""
+    if update.message and (update.message.left_chat_member or update.message.new_chat_members):
+        try:
+            await update.message.delete()
+            print("🗑️ Удалил системное сообщение (вход/выход)")
+        except Exception as e:
+            print(f"❌ Не смог удалить системное сообщение: {e}")
+
+# ==================== АНТИСПАМ ====================
+async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Мягкий фильтр спама: удаляет ссылки и много эмодзи, предупреждает."""
+    if not update.message or not update.message.text:
+        return
+    
+    user_id = update.message.from_user.id
+    chat_id = update.effective_chat.id
+    
+    # 1. Проверяем, не админ ли это (админов не трогаем)
+    try:
+        member = await context.bot.get_chat_member(chat_id, user_id)
+        if member.status in ['administrator', 'creator']:
+            return
+    except:
+        pass
+
+    text = update.message.text
+    is_spam = False
+
+    # 2. Ищем ссылки
+    if "http://" in text or "https://" in text or "t.me/" in text:
+        is_spam = True
+    
+    # 3. Ищем 3 и более эмодзи подряд (простая проверка)
+    emoji_pattern = re.compile("[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\U00002702-\U000027B0]+")
+    if len(emoji_pattern.findall(text)) >= 3:
+         is_spam = True
+
+    if is_spam:
+        try:
+            await update.message.delete()
+            # Отправляем предупреждение (можно удалить через минуту, но пока оставим)
+            warning = await context.bot.send_message(
+                chat_id=chat_id, 
+                text=f"⚠️ {update.message.from_user.first_name}, у нас тут без спама и ссылок, пожалуйста!"
+            )
+            print(f"🛡️ Удален спам от {update.message.from_user.first_name}")
+            # Чтобы предупреждение не висело вечно (через 15 сек удалится)
+            await asyncio.sleep(15)
+            await warning.delete()
+        except Exception as e:
+            print(f"❌ Ошибка при удалении спама: {e}")
+        
+        # Останавливаем обработку, чтобы Вася не отвечал на спам
+        raise ApplicationHandlerStop
+
+# ==================== ОБРАБОТЧИК СООБЩЕНИЙ ВАСИ ====================
+async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.text:
+        return
+
+    user_text = update.message.text.strip()
+    user_name = update.message.from_user.first_name
+    chat_id = update.effective_chat.id
+    
+    user_counter.add(chat_id)
+    user_messages_count[update.message.from_user.id] += 1
+
+    # Защита от дублей
+    last = last_questions[chat_id]
+    if last["text"] and last["text"].lower() == user_text.lower():
+        if (datetime.now() - last["time"]).seconds < 300:
+            return # Игнорируем, если повтор
+    last_questions[chat_id] = {"text": user_text, "time": datetime.now()}
+
+    # Калькулятор
+    amount_match = re.search(r'(\d+[\.,]?\d*)\s*(?:тыс|к|k|$)', user_text, re.IGNORECASE)
+    if amount_match and any(word in user_text.lower() for word in ["доход", "заработа", "получ", "сколько", "прибыль", "через"]):
+        try:
+            amount = float(amount_match.group(1).replace(',', '.'))
+            if 'тыс' in user_text.lower() or 'к' in user_text.lower(): amount *= 1000
+            months_match = re.search(r'(\d+)\s*(?:мес|месяц|м|month)', user_text, re.IGNORECASE)
+            months = int(months_match.group(1)) if months_match else 12
+
+            total = amount * (1.10 ** months)
+            profit = total - amount
+            reply = f"💸 Считаю...\n\n💰 Вклад: {amount:.2f}$\n📅 Срок: {months} мес.\n📈 Итог: {total:.2f}$\n🤑 Прибыль: {profit:.2f}$\n\nНеплохо, а?"
+            await update.message.reply_text(reply)
+            return
+        except:
+            pass
+
+    # Запрос к ИИ
+    await update.message.chat.send_action(action="typing")
+    reply = ask_ai(user_text, user_name)
+
+    if reply:
+        await update.message.reply_text(reply)
+        log_to_console(user_name, user_text, reply)
+    else:
+        await update.message.reply_text("😅 Чё-то я подвис. Попробуй ещё раз!")
 
 # ==================== КОМАНДЫ ====================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "О, привет! Я — Вася Пердюков. Местный балагур.\n"
-        "Со мной можно и по делу, и просто поболтать.\n\n"
-        "Команды: /top /riddle /answer /stats /mood",
-        parse_mode="Markdown"
-    )
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Ну чё, помогаю чем могу:\n\n"
-        "📊 /top — топ чата\n🧩 /riddle — загадка\n"
-        "🤓 /answer — ответ\n🎭 /mood — моё настроение",
-        parse_mode="Markdown"
-    )
-
-async def mood_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    mood = get_mood()
-    await update.message.reply_text(f"🎭 Сейчас я *{mood}*.", parse_mode="Markdown")
-
-async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM users")
-    count = c.fetchone()[0]
-    conn.close()
-    await update.message.reply_text(f"👥 Всего нас тут: *{count}* человек.", parse_mode="Markdown")
+    await update.message.reply_text("О, привет! 😎\nЯ — Вася. Слежу за порядком и могу поболтать. Спрашивай!")
 
 async def top_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT name, msg_count FROM users ORDER BY msg_count DESC LIMIT 5")
-    rows = c.fetchall()
-    conn.close()
-    if not rows:
-        await update.message.reply_text("📊 Пока никто не писал.")
+    if not user_messages_count:
+        await update.message.reply_text("📊 Пока никто ничего не писал.")
         return
-    text = "📊 *Топ-чата:*\n\n" + "\n".join(f"👤 {n} — {c} сообщений" for n, c in rows)
-    await update.message.reply_text(text, parse_mode="Markdown")
-
-async def riddle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    riddles = [
-        {"q": "Что растёт, когда вкладываешь, и уменьшается, когда выводишь?", "a": "Депозит!"},
-        {"q": "Что может быть и золотым, и цифровым, и всегда в цене?", "a": "Криптовалюта!"},
-        {"q": "Что даёт свет и деньги, но не требует счётчика?", "a": "Солнечная панель!"},
-        {"q": "Кто работает 24/7, не пьёт, не ест и приносит доход?", "a": "Майнинг-бот!"},
-    ]
-    r = random.choice(riddles)
-    await update.message.reply_text(f"🧩 *Загадка от Васи:*\n\n{r['q']}", parse_mode="Markdown")
-    context.user_data['riddle_answer'] = r['a']
-
-async def answer_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    answer = context.user_data.get('riddle_answer', "Загадку я уже забыл, давай новую: /riddle")
-    await update.message.reply_text(f"🤓 *Ответ:* {answer}", parse_mode="Markdown")
+    sorted_users = sorted(user_messages_count.items(), key=lambda x: x[1], reverse=True)[:5]
+    top_list = []
+    for user_id, count in sorted_users:
+        try:
+            user = await context.bot.get_chat(user_id)
+            name = user.first_name or "Аноним"
+        except:
+            name = "Аноним"
+        top_list.append(f"👤 {name} — {count} сообщений")
+    await update.message.reply_text("📊 **Топ-чата:**\n\n" + "\n".join(top_list))
 
 # ==================== ЗАПУСК ====================
 def main():
-    db_init()
-    print("🚀 Запуск Васи 3.0...")
+    print("🚀 Запуск Васи Пердюкова (с чисткой и антиспамом)...")
     app = Application.builder().token(BOT_TOKEN).build()
 
+    # 1. Антиспам (срабатывает первым, перехватывает спам)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_spam), group=0)
+    
+    # 2. Очистка системных сообщений
+    app.add_handler(MessageHandler(filters.StatusUpdate.ALL, delete_service_messages), group=0)
+    
+    # 3. Общение Васи (срабатывает, если это не спам)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages), group=1)
+
+    # Команды
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("top", top_command))
-    app.add_handler(CommandHandler("riddle", riddle_command))
-    app.add_handler(CommandHandler("answer", answer_command))
-    app.add_handler(CommandHandler("mood", mood_command))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages))
 
-    # Инициатива отключена — Вася только отвечает
-    # if app.job_queue:
-    #     app.job_queue.run_repeating(vasya_initiative, interval=5 * 3600, first=600)
-    #     print("✅ Инициатива включена (каждые ~5 часов, первый раз через 10 минут)")
-
-    print("✅ Вася 3.0 в деле!")
+    print("✅ Вася на посту! Следит за чистотой.")
     app.run_polling(close_loop=False)
 
 if __name__ == "__main__":

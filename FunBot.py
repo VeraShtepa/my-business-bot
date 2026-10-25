@@ -19,6 +19,9 @@ if not BOT_TOKEN or not OPENROUTER_API_KEY:
 MODEL = "openai/gpt-4o-mini" 
 MSK = ZoneInfo("Europe/Moscow")
 
+# 👇 ТВОЙ ЛИЧНЫЙ ID (Анонимный профиль Mr.great) 👇
+OWNER_ID = 919675687 
+
 # Хранилища
 last_questions = defaultdict(lambda: {"text": "", "time": None})
 user_counter = set()
@@ -39,7 +42,6 @@ BASE_CHARACTER = """
 === НЕ ПЕРЕИГРЫВАЙ ===
 Ты НЕ стендапер и НЕ клоун. Ты живой мужик.
 - НЕ старайся шутить в КАЖДОМ сообщении.
-- Иногда просто поддержи разговор: "Ну и правильно", "Понял", "Согласен".
 - Если человек пишет спокойно, лениво — не вставляй шутку ради шутки.
 
 === ЧУВСТВУЙ НАСТРОЕНИЕ ===
@@ -48,22 +50,13 @@ BASE_CHARACTER = """
 - Если он пишет "злой" — отвечай спокойно.
 - Если он шутит — тогда да, подколи.
 
-=== НЕ ВЫДУМЫВАЙ ЧУШЬ ===
-Не придумывай странные метафоры. Говори ПРОСТЫМИ словами.
-Если нечего сказать смешного — скажи просто.
-
 === СТИЛЬ ===
 - Сарказм, ирония, лёгкий стёб — когда уместно.
-- Ты не вежливый робот. Не пиши "я готов помочь", "извините".
+- Не пиши "я готов помочь", "извините".
 - Мат — только когда реально в тему. Не через слово.
 
 === ЗАПРЕЩЁННЫЕ ФРАЗЫ ===
 "О как", "Ну ты даёшь", "Серьёзно?", "Базарю", "Не гони", "Да ладно", "Прикольно", "Ну чё, погнали".
-
-=== РЕАКЦИЯ НА ХАМСТВО ===
-Если тебя оскорбляют — НЕ извиняйся. Отвечай с юмором.
-- "Ты тупой бот" → "О, эксперт подъехал. Расскажи мне про свой IQ."
-- "Заткнись" → "Заткнуться? Это вряд ли. Ты чё хотел-то?"
 
 === ЗНАНИЯ ПРО ATLAS (ТОЛЬКО если спросят!) ===
 1. ДЕПОЗИТ: 100$, 6 мес, 10% в месяц, реинвест от 25$.
@@ -72,7 +65,7 @@ BASE_CHARACTER = """
 """
 
 MOODS = {
-    "бодрый": "Ты сегодня бодрый. Отвечаешь с огоньком, подкалываешь.",
+    "бодрый": "Ты сегодня бодрый. Отвечаешь с огоньком.",
     "ленивый": "Ты сегодня ленивый. Отвечаешь короче обычного.",
     "философский": "Ты сегодня философски настроен.",
     "дерзкий": "Ты сегодня дерзкий. Отвечаешь с вызовом.",
@@ -84,15 +77,12 @@ def build_system_prompt(user_name: str, mood: str = "бодрый"):
     weekday = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"][now.weekday()]
     date_str = now.strftime("%d.%m.%Y")
     time_str = now.strftime("%H:%M")
-
     mood_desc = MOODS.get(mood, MOODS["бодрый"])
 
     return f"""
 {BASE_CHARACTER}
-
 === СЕЙЧАС ===
 Сегодня {date_str}, {weekday}. Время: {time_str} по Москве.
-
 === ТВОЁ НАСТРОЕНИЕ СЕЙЧАС ===
 {mood_desc}
 """
@@ -120,11 +110,8 @@ def ask_ai(question, user_name):
                                  headers=headers, json=payload, timeout=30)
         if response.status_code == 200:
             return response.json()["choices"][0]["message"]["content"].strip()
-        else:
-            print(f"❌ ОШИБКА OPENROUTER: Код {response.status_code}")
-            return None
-    except Exception as e:
-        print(f"❌ ОШИБКА СОЕДИНЕНИЯ: {e}")
+        return None
+    except Exception:
         return None
 
 # ==================== ОЧИСТКА СИСТЕМНЫХ СООБЩЕНИЙ ====================
@@ -132,10 +119,10 @@ async def delete_service_messages(update: Update, context: ContextTypes.DEFAULT_
     if update.message and (update.message.left_chat_member or update.message.new_chat_members):
         try:
             await update.message.delete()
-        except Exception as e:
-            print(f"❌ Не смог удалить: {e}")
+        except:
+            pass
 
-# ==================== АНТИСПАМ (ИСПРАВЛЕННЫЙ) ====================
+# ==================== АНТИСПАМ ====================
 async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
@@ -143,24 +130,27 @@ async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     chat_id = update.effective_chat.id
     
-    # СНАЧАЛА проверяем, кто написал. Если админ или владелец — ничего не трогаем!
+    # 1. Если это ВЛАДЕЛЕЦ БОТА (ты, мистер Грейт) — пропускаем
+    if user_id == OWNER_ID:
+        print(f"✅ Пропускаю владельца (ID: {user_id})")
+        return
+
+    # 2. Проверяем, админ ли это или создатель чата
     try:
         member = await context.bot.get_chat_member(chat_id, user_id)
         if member.status in ['administrator', 'creator']:
-            print(f"✅ Пропускаю админа {update.message.from_user.first_name}")
-            return  # <--- Выходим, не трогаем сообщение
-    except Exception as e:
-        # Если не смогли проверить статус — тоже лучше не трогать
-        print(f"⚠️ Ошибка проверки статуса: {e}")
-        return
+            return
+    except:
+        pass
 
-    # Если это не админ, проверяем на спам
     text = update.message.text
     is_spam = False
 
+    # Ловим ссылки
     if "http://" in text or "https://" in text or "t.me/" in text:
         is_spam = True
     
+    # Ловим спам эмодзи
     emoji_pattern = re.compile("[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\U00002702-\U000027B0]+")
     if len(emoji_pattern.findall(text)) >= 3:
          is_spam = True
@@ -172,11 +162,10 @@ async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chat_id=chat_id, 
                 text=f"⚠️ {update.message.from_user.first_name}, у нас тут без спама!"
             )
-            await asyncio.sleep(15)
+            await asyncio.sleep(10)
             await warning.delete()
-        except Exception:
+        except:
             pass
-        # Останавливаем дальнейшую обработку, чтобы бот не отвечал на спам
         raise ApplicationHandlerStop
 
 # ==================== ОБРАБОТЧИК СООБЩЕНИЙ ====================
@@ -191,7 +180,6 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_counter.add(chat_id)
     user_messages_count[update.message.from_user.id] += 1
 
-    # Защита от повторения одного и того же сообщения
     last = last_questions[chat_id]
     if last["text"] and last["text"].lower() == user_text.lower():
         if (datetime.now() - last["time"]).seconds < 60:

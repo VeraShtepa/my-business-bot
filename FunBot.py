@@ -135,7 +135,7 @@ async def delete_service_messages(update: Update, context: ContextTypes.DEFAULT_
         except Exception as e:
             print(f"❌ Не смог удалить: {e}")
 
-# ==================== АНТИСПАМ ====================
+# ==================== АНТИСПАМ (ИСПРАВЛЕННЫЙ) ====================
 async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
@@ -143,22 +143,24 @@ async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     chat_id = update.effective_chat.id
     
-    # ПРОВЕРКА: Если это админ или владелец чата - пропускаем (не трогаем)
+    # СНАЧАЛА проверяем, кто написал. Если админ или владелец — ничего не трогаем!
     try:
         member = await context.bot.get_chat_member(chat_id, user_id)
         if member.status in ['administrator', 'creator']:
-            return
-    except:
-        pass
+            print(f"✅ Пропускаю админа {update.message.from_user.first_name}")
+            return  # <--- Выходим, не трогаем сообщение
+    except Exception as e:
+        # Если не смогли проверить статус — тоже лучше не трогать
+        print(f"⚠️ Ошибка проверки статуса: {e}")
+        return
 
+    # Если это не админ, проверяем на спам
     text = update.message.text
     is_spam = False
 
-    # Ловим ссылки (кроме тех, что от админов, они уже отсеялись выше)
     if "http://" in text or "https://" in text or "t.me/" in text:
         is_spam = True
     
-    # Ловим много эмодзи подряд
     emoji_pattern = re.compile("[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\U00002702-\U000027B0]+")
     if len(emoji_pattern.findall(text)) >= 3:
          is_spam = True
@@ -174,6 +176,7 @@ async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await warning.delete()
         except Exception:
             pass
+        # Останавливаем дальнейшую обработку, чтобы бот не отвечал на спам
         raise ApplicationHandlerStop
 
 # ==================== ОБРАБОТЧИК СООБЩЕНИЙ ====================
@@ -188,6 +191,7 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_counter.add(chat_id)
     user_messages_count[update.message.from_user.id] += 1
 
+    # Защита от повторения одного и того же сообщения
     last = last_questions[chat_id]
     if last["text"] and last["text"].lower() == user_text.lower():
         if (datetime.now() - last["time"]).seconds < 60:
@@ -224,11 +228,8 @@ def main():
     print("🚀 Запуск Васи Пердюкова...")
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # Спам-фильтр (сначала проверка прав, потом спам)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_spam), group=0)
-    # Удаление системных сообщений
     app.add_handler(MessageHandler(filters.StatusUpdate.ALL, delete_service_messages), group=0)
-    # Общение Васи
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages), group=1)
 
     print("✅ Вася на посту!")

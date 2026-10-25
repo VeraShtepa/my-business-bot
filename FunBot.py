@@ -19,8 +19,11 @@ if not BOT_TOKEN or not OPENROUTER_API_KEY:
 MODEL = "openai/gpt-4o-mini" 
 MSK = ZoneInfo("Europe/Moscow")
 
-# 👇 ТВОЙ ЛИЧНЫЙ ID (Анонимный профиль Mr.great) 👇
-OWNER_ID = 919675687 
+# 👇 ВПИШИ СЮДА ID, КОТОРЫЕ БОТ НЕ ДОЛЖЕН ТРОГАТЬ НИКОГДА 👇
+ALLOWED_IDS = [
+    919675687,  # Твой анонимный профиль "Mr.great"
+    # Сюда можешь вписать основной ID (через запятую), если знаешь
+]
 
 # Хранилища
 last_questions = defaultdict(lambda: {"text": "", "time": None})
@@ -130,15 +133,16 @@ async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     chat_id = update.effective_chat.id
     
-    # 1. Если это ВЛАДЕЛЕЦ БОТА (ты, мистер Грейт) — пропускаем
-    if user_id == OWNER_ID:
-        print(f"✅ Пропускаю владельца (ID: {user_id})")
+    # 1. Если ID в белом списке — пропускаем
+    if user_id in ALLOWED_IDS:
+        print(f"✅ Пропускаю из белого списка (ID: {user_id})")
         return
 
-    # 2. Проверяем, админ ли это или создатель чата
+    # 2. Если это владелец группы (creator) или админ — пропускаем
     try:
         member = await context.bot.get_chat_member(chat_id, user_id)
         if member.status in ['administrator', 'creator']:
+            print(f"✅ Пропускаю админа/владельца (ID: {user_id})")
             return
     except:
         pass

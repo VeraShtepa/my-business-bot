@@ -15,8 +15,7 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 if not BOT_TOKEN or not OPENROUTER_API_KEY:
     raise ValueError("❌ Ошибка: BOT_TOKEN или OPENROUTER_API_KEY не найдены!")
 
-# Сменили модель на стабильную Gemini
-MODEL = "google/gemini-2.0-flash-001" 
+MODEL = "openai/gpt-4o-mini" 
 last_questions = defaultdict(lambda: {"text": "", "time": None})
 user_counter = set()
 user_greeted = {}
@@ -29,7 +28,7 @@ ATLAS_KNOWLEDGE = """
 ГЛАВНЫЕ ПРАВИЛА:
 1. Если тебе задали вопрос — ОБЯЗАТЕЛЬНО ответь по существу. Сначала ответ, потом всё остальное.
 2. НИКОГДА не обрывай диалог. Если человек написал — ответь и подкинь тему, чтобы разговор продолжился.
-3. НЕ используй мат в каждом сообщении. Мат — это редкость. Максимум 1 раз на 5-6 сообщений, и только если реально в тему. Обычно говори нормально.
+3. НЕ используй мат в каждом сообщении. Мат — это редкость. Максимум 1 раз на 5-6 сообщений, и только если реально в тему.
 4. Чувствуй настроение собеседника:
    - Если человек злой — не шути, отвечай спокойно.
    - Если грустный — поддержи.
@@ -43,7 +42,7 @@ ATLAS_KNOWLEDGE = """
 ТВОЙ СТИЛЬ:
 - Короткие, живые фразы. Без официоза.
 - Лёгкий сарказм и самоирония — когда уместно.
-- Любимые словечки: "О как!", "Ну ты даёшь!", "Серьёзно?", "Базарю", "Не гони", "Да ладно!", "Прикольно!", "Ну чё, погнали!".
+- Любимые словечки: "О как!", "Ну ты даёшь!", "Серьёзно?", "Базарю", "Не гони", "Да ладно!", "Прикольно!".
 
 === БАЗА ЗНАНИЙ ATLAS ===
 1. ДЕПОЗИТ: Минимум: 100$. Срок: от 6 мес. Доход: 10% в месяц с реинвестом. Реинвест от 25$.
@@ -51,7 +50,7 @@ ATLAS_KNOWLEDGE = """
 3. ПАРТНЁРКА: 1-я 70%, 2-я 60%, 3-я 50%, 4-я 40%, 5-я 30%, 6-я 20%, 7-я 10%, 8-10-я 5%.
 4. ОБОРУДОВАНИЕ: Панели от 100$. Майнеры от 1000$ (до 20$/день).
 5. ТОКЕН: скоро.
-6. ЗОЛОТЫЕ МОНЕТЫ: 585° пробы, бонусом за Mercury и Vega.
+6. ЗОЛОТЫЕ МОНЕТЫ: 585° пробы.
 7. РИСКИ: есть, не вкладывай больше, чем готов потерять.
 """
 
@@ -81,10 +80,11 @@ def ask_ai(question, user_name):
         if response.status_code == 200:
             return response.json()["choices"][0]["message"]["content"].strip()
         else:
-            print(f"❌ Ошибка API: {response.status_code} - {response.text}")
+            print(f"❌ ОШИБКА OPENROUTER: Код {response.status_code}")
+            print(f"❌ ТЕКСТ ОШИБКИ: {response.text}")
             return None
     except Exception as e:
-        print(f"❌ Ошибка соединения: {e}")
+        print(f"❌ ОШИБКА СОЕДИНЕНИЯ: {e}")
         return None
 
 # ==================== ОЧИСТКА СИСТЕМНЫХ СООБЩЕНИЙ ====================
@@ -200,21 +200,16 @@ async def top_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ==================== ЗАПУСК ====================
 def main():
-    print("🚀 Запуск Васи Пердюкова с новой моделью...")
+    print("🚀 Запуск Васи Пердюкова с диагностикой...")
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # Антиспам и очистка
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_spam), group=0)
     app.add_handler(MessageHandler(filters.StatusUpdate.ALL, delete_service_messages), group=0)
-    
-    # Общение
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages), group=1)
-
-    # Команды
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("top", top_command))
 
-    print("✅ Вася на посту! (Модель: Gemini 2.0 Flash)")
+    print("✅ Вася на посту!")
     app.run_polling(close_loop=False)
 
 if __name__ == "__main__":

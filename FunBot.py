@@ -19,12 +19,6 @@ if not BOT_TOKEN or not OPENROUTER_API_KEY:
 MODEL = "openai/gpt-4o-mini" 
 MSK = ZoneInfo("Europe/Moscow")
 
-# 👇 ВПИШИ СЮДА ID, КОТОРЫЕ БОТ НЕ ДОЛЖЕН ТРОГАТЬ НИКОГДА 👇
-ALLOWED_IDS = [
-    919675687,  # Твой анонимный профиль "Mr.great"
-    # Сюда можешь вписать основной ID (через запятую), если знаешь
-]
-
 # Хранилища
 last_questions = defaultdict(lambda: {"text": "", "time": None})
 user_counter = set()
@@ -125,24 +119,18 @@ async def delete_service_messages(update: Update, context: ContextTypes.DEFAULT_
         except:
             pass
 
-# ==================== АНТИСПАМ ====================
+# ==================== АНТИСПАМ (ТОЛЬКО ДЛЯ СПАМЕРОВ) ====================
 async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
     
     user_id = update.message.from_user.id
     chat_id = update.effective_chat.id
-    
-    # 1. Если ID в белом списке — пропускаем
-    if user_id in ALLOWED_IDS:
-        print(f"✅ Пропускаю из белого списка (ID: {user_id})")
-        return
 
-    # 2. Если это владелец группы (creator) или админ — пропускаем
+    # Пропускаем всех, у кого есть права админа или он создатель
     try:
         member = await context.bot.get_chat_member(chat_id, user_id)
         if member.status in ['administrator', 'creator']:
-            print(f"✅ Пропускаю админа/владельца (ID: {user_id})")
             return
     except:
         pass
@@ -150,13 +138,9 @@ async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     is_spam = False
 
-    # Ловим ссылки
-    if "http://" in text or "https://" in text or "t.me/" in text:
-        is_spam = True
-    
-    # Ловим спам эмодзи
+    # Проверяем ТОЛЬКО на 4+ эмодзи подряд (ссылки больше не трогаем!)
     emoji_pattern = re.compile("[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\U00002702-\U000027B0]+")
-    if len(emoji_pattern.findall(text)) >= 3:
+    if len(emoji_pattern.findall(text)) >= 4:
          is_spam = True
 
     if is_spam:
@@ -164,7 +148,7 @@ async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.delete()
             warning = await context.bot.send_message(
                 chat_id=chat_id, 
-                text=f"⚠️ {update.message.from_user.first_name}, у нас тут без спама!"
+                text=f"⚠️ {update.message.from_user.first_name}, полегче с эмодзи!"
             )
             await asyncio.sleep(10)
             await warning.delete()

@@ -15,7 +15,8 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 if not BOT_TOKEN or not OPENROUTER_API_KEY:
     raise ValueError("❌ Ошибка: BOT_TOKEN или OPENROUTER_API_KEY не найдены!")
 
-MODEL = "openai/gpt-4o-mini"
+# Сменили модель на стабильную Gemini
+MODEL = "google/gemini-2.0-flash-001" 
 last_questions = defaultdict(lambda: {"text": "", "time": None})
 user_counter = set()
 user_greeted = {}
@@ -30,16 +31,14 @@ ATLAS_KNOWLEDGE = """
 2. НИКОГДА не обрывай диалог. Если человек написал — ответь и подкинь тему, чтобы разговор продолжился.
 3. НЕ используй мат в каждом сообщении. Мат — это редкость. Максимум 1 раз на 5-6 сообщений, и только если реально в тему. Обычно говори нормально.
 4. Чувствуй настроение собеседника:
-   - Если человек злой или выносит мозг — не шути, отвечай спокойно и по делу.
-   - Если человек грустный — поддержи.
-   - Если человек флиртует — подыграй в рамках приличия.
-   - Если человек шутит — поржи с ним.
-   - Если человек серьёзный — отвечай серьёзно.
+   - Если человек злой — не шути, отвечай спокойно.
+   - Если грустный — поддержи.
+   - Если флиртует — подыграй в рамках приличия.
+   - Если шутит — поржи с ним.
 
 ТВОЙ ХАРАКТЕР:
 - Ты общительный, но не клоун. Ты можешь быть разным.
-- Ты не зануда, но и не петрушка.
-- Ты свой в доску, но без перегибов.
+- Ты не зануда, но и не петрушка. Ты свой в доску, но без перегибов.
 
 ТВОЙ СТИЛЬ:
 - Короткие, живые фразы. Без официоза.
@@ -54,11 +53,6 @@ ATLAS_KNOWLEDGE = """
 5. ТОКЕН: скоро.
 6. ЗОЛОТЫЕ МОНЕТЫ: 585° пробы, бонусом за Mercury и Vega.
 7. РИСКИ: есть, не вкладывай больше, чем готов потерять.
-
-=== ПРАВИЛА ОТВЕТОВ ===
-- ВСЕГДА отвечай на прямой вопрос.
-- НИКОГДА не обрывай диалог, всегда подкидывай тему.
-- Чувствуй настроение и подстраивайся.
 """
 
 # ==================== ЛОГИ ====================
@@ -86,31 +80,30 @@ def ask_ai(question, user_name):
                                  headers=headers, json=payload, timeout=30)
         if response.status_code == 200:
             return response.json()["choices"][0]["message"]["content"].strip()
-        return None
+        else:
+            print(f"❌ Ошибка API: {response.status_code} - {response.text}")
+            return None
     except Exception as e:
-        print(f"Ошибка: {e}")
+        print(f"❌ Ошибка соединения: {e}")
         return None
 
 # ==================== ОЧИСТКА СИСТЕМНЫХ СООБЩЕНИЙ ====================
 async def delete_service_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Удаляет сообщения о том, что кто-то зашел или вышел из чата."""
     if update.message and (update.message.left_chat_member or update.message.new_chat_members):
         try:
             await update.message.delete()
-            print("🗑️ Удалил системное сообщение (вход/выход)")
+            print("🗑️ Удалил системное сообщение")
         except Exception as e:
-            print(f"❌ Не смог удалить системное сообщение: {e}")
+            print(f"❌ Не смог удалить: {e}")
 
 # ==================== АНТИСПАМ ====================
 async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Мягкий фильтр спама: удаляет ссылки и много эмодзи, предупреждает."""
     if not update.message or not update.message.text:
         return
     
     user_id = update.message.from_user.id
     chat_id = update.effective_chat.id
     
-    # 1. Проверяем, не админ ли это (админов не трогаем)
     try:
         member = await context.bot.get_chat_member(chat_id, user_id)
         if member.status in ['administrator', 'creator']:
@@ -121,11 +114,9 @@ async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     is_spam = False
 
-    # 2. Ищем ссылки
     if "http://" in text or "https://" in text or "t.me/" in text:
         is_spam = True
     
-    # 3. Ищем 3 и более эмодзи подряд (простая проверка)
     emoji_pattern = re.compile("[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\U00002702-\U000027B0]+")
     if len(emoji_pattern.findall(text)) >= 3:
          is_spam = True
@@ -133,19 +124,16 @@ async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_spam:
         try:
             await update.message.delete()
-            # Отправляем предупреждение (можно удалить через минуту, но пока оставим)
             warning = await context.bot.send_message(
                 chat_id=chat_id, 
-                text=f"⚠️ {update.message.from_user.first_name}, у нас тут без спама и ссылок, пожалуйста!"
+                text=f"⚠️ {update.message.from_user.first_name}, у нас тут без спама и ссылок!"
             )
             print(f"🛡️ Удален спам от {update.message.from_user.first_name}")
-            # Чтобы предупреждение не висело вечно (через 15 сек удалится)
             await asyncio.sleep(15)
             await warning.delete()
         except Exception as e:
             print(f"❌ Ошибка при удалении спама: {e}")
         
-        # Останавливаем обработку, чтобы Вася не отвечал на спам
         raise ApplicationHandlerStop
 
 # ==================== ОБРАБОТЧИК СООБЩЕНИЙ ВАСИ ====================
@@ -160,14 +148,12 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_counter.add(chat_id)
     user_messages_count[update.message.from_user.id] += 1
 
-    # Защита от дублей
     last = last_questions[chat_id]
     if last["text"] and last["text"].lower() == user_text.lower():
         if (datetime.now() - last["time"]).seconds < 300:
-            return # Игнорируем, если повтор
+            return 
     last_questions[chat_id] = {"text": user_text, "time": datetime.now()}
 
-    # Калькулятор
     amount_match = re.search(r'(\d+[\.,]?\d*)\s*(?:тыс|к|k|$)', user_text, re.IGNORECASE)
     if amount_match and any(word in user_text.lower() for word in ["доход", "заработа", "получ", "сколько", "прибыль", "через"]):
         try:
@@ -184,7 +170,6 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
         except:
             pass
 
-    # Запрос к ИИ
     await update.message.chat.send_action(action="typing")
     reply = ask_ai(user_text, user_name)
 
@@ -215,23 +200,21 @@ async def top_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ==================== ЗАПУСК ====================
 def main():
-    print("🚀 Запуск Васи Пердюкова (с чисткой и антиспамом)...")
+    print("🚀 Запуск Васи Пердюкова с новой моделью...")
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # 1. Антиспам (срабатывает первым, перехватывает спам)
+    # Антиспам и очистка
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_spam), group=0)
-    
-    # 2. Очистка системных сообщений
     app.add_handler(MessageHandler(filters.StatusUpdate.ALL, delete_service_messages), group=0)
     
-    # 3. Общение Васи (срабатывает, если это не спам)
+    # Общение
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages), group=1)
 
     # Команды
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("top", top_command))
 
-    print("✅ Вася на посту! Следит за чистотой.")
+    print("✅ Вася на посту! (Модель: Gemini 2.0 Flash)")
     app.run_polling(close_loop=False)
 
 if __name__ == "__main__":

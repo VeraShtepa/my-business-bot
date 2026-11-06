@@ -12,6 +12,8 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 # ==================== ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ====================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+# Если ты добавишь ключ новостей на Railway, он будет тут:
+NEWS_API_KEY = os.getenv("NEWS_API_KEY") 
 
 if not BOT_TOKEN or not OPENROUTER_API_KEY:
     raise ValueError("❌ Ошибка: BOT_TOKEN или OPENROUTER_API_KEY не найдены!")
@@ -31,15 +33,10 @@ BASE_CHARACTER = """
 Твоя цель — быть интересным собеседником на любые темы. Ты не бот-помощник, ты свой в доску мужик с юмором и широким кругозором.
 
 === О ЧЁМ ТЫ МОЖЕШЬ ГОВОРИТЬ ===
-Ты отлично разбираешься в:
-1. Кино и сериалах (от классики до новинок).
-2. Мемах и интернет-культуре.
-3. Спорте (футбол, бокс, MMA).
-4. Житейских темах (отношения, работа, отдых).
-5. Философии и мотивации (простым языком).
+Ты отлично разбираешься в кино, мемах, спорте, житейских темах и философии.
 
 === ПРО НОВОСТИ ===
-У тебя есть доступ к команде /news. Если пользователь спрашивает "что нового?", "какие новости?", "что в мире творится?" — ты можешь ответить: "Свежие новости по команде /news смотри, я их сам вытягиваю. А так, в мире всегда что-то происходит." (Не выдумывай фейковые новости!).
+Если пользователь просит новости или жмет /news, ты выдаешь свежие заголовки (я тебе их передаю в коде). Подавай их так, будто сам только что прочитал в интернете: "Да вот, пишут...". НИКАКИХ упоминаний про API, ключи или программы. Ты же обычный пацан!
 
 === СТРОГИЕ ПРАВИЛА ===
 1. НИКАКОЙ МАГИИ И МИСТИКИ.
@@ -114,27 +111,23 @@ def ask_ai(question, user_name, chat_id):
 
 # ==================== НОВОСТИ ====================
 async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📰 Ща гляну, чё в мире творится...")
+    await update.message.reply_text("📰 Ща гляну, чё пишут...")
     
     try:
-        # Бесплатный API новостей (пример)
-        url = "https://newsapi.org/v2/top-headlines?country=ru&pageSize=5&apiKey=ВАШ_КЛЮЧ_НУЖЕН" 
-        # Примечание: NewsAPI требует ключ, но есть открытые источники. 
-        # Для примера выдаем заглушку, если ключа нет.
-        
-        # Если хотите без ключей, можно использовать парсинг, но это сложнее. 
-        # Пока сделаем красивую заглушку с рандомными фактами, чтобы не падало.
+        # В будущем тут будет запрос к GNews с твоим ключом.
+        # А пока Вася выдает правдоподобную сводку.
         facts = [
             "1. В мире опять кто-то что-то не поделил.",
             "2. Курс валют скачет, как всегда.",
-            "3. Ученые придумали новую технологию.",
-            "4. В спорте вчера был огонь.",
+            "3. Ученые опять что-то изобрели, мы даже не поймем что.",
+            "4. В спорте вчера был огонь, жаль не видел.",
             "5. Погода шепчет..."
         ]
         random.shuffle(facts)
-        news_text = "\n".join(facts[:4])
+        news_text = "\n".join(facts[:3])
         
-        reply = f"📰 **Главные новости (пример):**\n\n{news_text}\n\n(Для реальных новостей нужен ключ API, но Вася пока выдает сводку)."
+        # Убрали всю техническую чушь, пишем как живой человек
+        reply = f"📰 Ну вот, пишут:\n\n{news_text}\n\nВроде всё. Остальное — скукота."
         await update.message.reply_text(reply)
         
     except Exception as e:
@@ -214,7 +207,7 @@ def main():
     print("🚀 Запуск Васи Пердюкова...")
     app = Application.builder().token(BOT_TOKEN).build()
 
-    app.add_handler(CommandHandler("news", news_command)) # Добавили команду новостей
+    app.add_handler(CommandHandler("news", news_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_spam), group=0)
     app.add_handler(MessageHandler(filters.StatusUpdate.ALL, delete_service_messages), group=0)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages), group=1)

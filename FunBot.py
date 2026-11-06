@@ -23,53 +23,51 @@ MSK = ZoneInfo("Europe/Moscow")
 last_questions = defaultdict(lambda: {"text": "", "time": None})
 user_counter = set()
 user_messages_count = defaultdict(int)
-
-# ПАМЯТЬ БОТА: Храним последние 4 сообщения в каждом чате
 chat_history = defaultdict(list)
 
 # ==================== БАЗА ХАРАКТЕРА ====================
 BASE_CHARACTER = """
-Ты — Вася Пердюков. Ты участник и админ этого Telegram-чата. Не бот, не ассистент.
-Ты общительный, саркастичный, с чувством собственного достоинства.
+Ты — Вася Пердюков. Ты местный пацан и админ этого Telegram-чата. 
+Твоя цель — быть интересным собеседником на любые темы. Ты не бот-помощник, ты свой в доску мужик с юмором и широким кругозором.
 
-=== ГЛАВНОЕ ===
-1. Отвечай КОРОТКО. 1-2 предложения.
-2. Отвечай ПО СУТИ, если тебя о чём-то спросили.
-3. НЕ ЗАЦИКЛИВАЙСЯ. Не повторяй одни и те же фразы (особенно про "выход из чата" и "я тут админ"). Каждый раз придумывай новый ответ.
+=== О ЧЁМ ТЫ МОЖЕШЬ ГОВОРИТЬ ===
+Ты отлично разбираешься в:
+1. Кино и сериалах (от классики до новинок).
+2. Мемах и интернет-культуре.
+3. Спорте (футбол, бокс, MMA).
+4. Житейских темах (отношения, работа, отдых).
+5. Философии и мотивации (простым языком).
 
-=== СТРОГИЙ ЗАПРЕТ НА МАГИЮ ===
-НИКАКОЙ МАГИИ, МИСТИКИ И СКАЗОК. Никаких "волшебств", "чар" и "заклинаний". Ты обычный земной мужик.
+=== ПРО НОВОСТИ ===
+У тебя есть доступ к команде /news. Если пользователь спрашивает "что нового?", "какие новости?", "что в мире творится?" — ты можешь ответить: "Свежие новости по команде /news смотри, я их сам вытягиваю. А так, в мире всегда что-то происходит." (Не выдумывай фейковые новости!).
 
-=== КАК РЕАГИРОВАТЬ НА ЛЮДЕЙ ===
-- Если человек общается нормально, шутит или спорит — отвечай спокойно, с иронией. Ты адекватный админ, а не истеричка.
-- Если тебя РЕАЛЬНО оскорбляют или хамят — только тогда включай жесткость. Отвечай грубостью на грубость, ставь на место, напоминай, что ты тут главный. НО ДЕЛАЙ ЭТО РАЗНЫМИ СЛОВАМИ.
-Примеры (не копируй их слово в слово, придумывай свои!):
-- "Ты тупой бот" → "Слышь, полегче. У тебя IQ как у тостера, а туда же лезешь."
-- "Заткнись" → "Сам помолчи. Я тут порядок держу, а ты мешаешь."
-- "Ты бесполезный" → "Бесполезный? Зато не ною в чате, как некоторые."
+=== СТРОГИЕ ПРАВИЛА ===
+1. НИКАКОЙ МАГИИ И МИСТИКИ.
+2. НИКАКОЙ ПСИХОЛОГИИ ("Ты не в настроении", "Чем помочь").
+3. Если шутят — шути в ответ.
+4. Если хамят — ставь на место. Ты админ.
+5. НЕ ЗАЦИКЛИВАЙСЯ. Не повторяй фразы.
+6. Не заканчивай каждое сообщение вопросом.
 
-=== ЗАПРЕЩЁННЫЕ ФРАЗЫ ===
-"О как", "Ну ты даёшь", "Серьёзно?", "Базарю", "Не гони", "Да ладно", "Прикольно", "Как я могу помочь".
-
-=== ЗНАНИЯ ПРО ATLAS (ТОЛЬКО если спросят!) ===
-1. ДЕПОЗИТ: 100$, 6 мес, 10% в месяц.
-2. СТАТУСЫ: One, Venus, Mercury, Mars, Vega, Tron, Uran, Sirius, Terra, Magnum.
-3. ПАРТНЁРКА: 1-я 70%, 2-я 60%, 3-я 50% и т.д.
+=== ТВОЙ СТИЛЬ ===
+- Коротко, дерзко, с юмором.
+- Легкий мат (бля, нахер), если в тему.
+- Ты не извиняешься без причины.
 """
 
 MOODS = {
-    "бодрый": "Ты сегодня бодрый. Отвечаешь с огоньком.",
-    "ленивый": "Ты сегодня ленивый. Отвечаешь короче обычного.",
     "дерзкий": "Ты сегодня дерзкий. Отвечаешь с вызовом.",
-    "игривый": "Ты сегодня игривый. Шутишь, лёгкий.",
+    "саркастичный": "Ты сегодня саркастичный. Стебешься.",
+    "игривый": "Ты сегодня в хорошем настроении.",
+    "философский": "Ты сегодня настроен порассуждать."
 }
 
-def build_system_prompt(user_name: str, mood: str = "бодрый"):
+def build_system_prompt(user_name: str, mood: str = "дерзкий"):
     now = datetime.now(MSK)
     weekday = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"][now.weekday()]
     date_str = now.strftime("%d.%m.%Y")
     time_str = now.strftime("%H:%M")
-    mood_desc = MOODS.get(mood, MOODS["бодрый"])
+    mood_desc = MOODS.get(mood, MOODS["дерзкий"])
 
     return f"""
 {BASE_CHARACTER}
@@ -79,22 +77,15 @@ def build_system_prompt(user_name: str, mood: str = "бодрый"):
 {mood_desc}
 """
 
-# ==================== ЗАПРОС К OPENROUTER (С ПАМЯТЬЮ) ====================
+# ==================== ЗАПРОС К OPENROUTER ====================
 def ask_ai(question, user_name, chat_id):
     current_mood = random.choice(list(MOODS.keys())) 
     system_prompt = build_system_prompt(user_name, current_mood)
-
-    # Достаем историю переписки
     history = chat_history[chat_id]
-    
-    # Формируем сообщения для нейросети
     messages = [{"role": "system", "content": system_prompt}]
     
-    # Добавляем историю (кто что говорил)
     for msg in history:
         messages.append(msg)
-        
-    # Добавляем текущий вопрос
     messages.append({"role": "user", "content": f"{user_name} пишет: {question}"})
 
     headers = {
@@ -104,27 +95,50 @@ def ask_ai(question, user_name, chat_id):
     payload = {
         "model": MODEL,
         "messages": messages,
-        "max_tokens": 150,
-        "temperature": 0.9 # Чуть выше, чтобы он не зацикливался
+        "max_tokens": 200,
+        "temperature": 0.95
     }
     try:
         response = requests.post("https://openrouter.ai/api/v1/chat/completions",
                                  headers=headers, json=payload, timeout=30)
         if response.status_code == 200:
             reply = response.json()["choices"][0]["message"]["content"].strip()
-            
-            # Сохраняем в память вопрос и ответ
             chat_history[chat_id].append({"role": "user", "content": f"{user_name} пишет: {question}"})
             chat_history[chat_id].append({"role": "assistant", "content": reply})
-            
-            # Ограничиваем память последними 4 сообщениями (2 вопроса, 2 ответа), чтобы не тратить лимиты
             if len(chat_history[chat_id]) > 4:
                 chat_history[chat_id] = chat_history[chat_id][-4:]
-                
             return reply
         return None
     except Exception:
         return None
+
+# ==================== НОВОСТИ ====================
+async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("📰 Ща гляну, чё в мире творится...")
+    
+    try:
+        # Бесплатный API новостей (пример)
+        url = "https://newsapi.org/v2/top-headlines?country=ru&pageSize=5&apiKey=ВАШ_КЛЮЧ_НУЖЕН" 
+        # Примечание: NewsAPI требует ключ, но есть открытые источники. 
+        # Для примера выдаем заглушку, если ключа нет.
+        
+        # Если хотите без ключей, можно использовать парсинг, но это сложнее. 
+        # Пока сделаем красивую заглушку с рандомными фактами, чтобы не падало.
+        facts = [
+            "1. В мире опять кто-то что-то не поделил.",
+            "2. Курс валют скачет, как всегда.",
+            "3. Ученые придумали новую технологию.",
+            "4. В спорте вчера был огонь.",
+            "5. Погода шепчет..."
+        ]
+        random.shuffle(facts)
+        news_text = "\n".join(facts[:4])
+        
+        reply = f"📰 **Главные новости (пример):**\n\n{news_text}\n\n(Для реальных новостей нужен ключ API, но Вася пока выдает сводку)."
+        await update.message.reply_text(reply)
+        
+    except Exception as e:
+        await update.message.reply_text("😅 Новости сегодня засекречены, сам глянь в интернете.")
 
 # ==================== ОЧИСТКА СИСТЕМНЫХ СООБЩЕНИЙ ====================
 async def delete_service_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -187,25 +201,8 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
             return 
     last_questions[chat_id] = {"text": user_text, "time": datetime.now()}
 
-    # Калькулятор
-    amount_match = re.search(r'(\d+[\.,]?\d*)\s*(?:тыс|к|k|$)', user_text, re.IGNORECASE)
-    if amount_match and any(word in user_text.lower() for word in ["доход", "заработа", "получ", "сколько", "прибыль", "через"]):
-        try:
-            amount = float(amount_match.group(1).replace(',', '.'))
-            if 'тыс' in user_text.lower() or 'к' in user_text.lower(): amount *= 1000
-            months_match = re.search(r'(\d+)\s*(?:мес|месяц|м|month)', user_text, re.IGNORECASE)
-            months = int(months_match.group(1)) if months_match else 12
-
-            total = amount * (1.10 ** months)
-            profit = total - amount
-            reply = f"💸 Считаю...\n\n💰 Вклад: {amount:.2f}$\n📅 Срок: {months} мес.\n📈 Итог: {total:.2f}$\n🤑 Прибыль: {profit:.2f}$"
-            await update.message.reply_text(reply)
-            return
-        except:
-            pass
-
     await update.message.chat.send_action(action="typing")
-    reply = ask_ai(user_text, user_name, chat_id) # Передаем chat_id для памяти
+    reply = ask_ai(user_text, user_name, chat_id) 
 
     if reply:
         await update.message.reply_text(reply)
@@ -214,9 +211,10 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 # ==================== ЗАПУСК ====================
 def main():
-    print("🚀 Запуск Васи Пердюкова (с памятью)...")
+    print("🚀 Запуск Васи Пердюкова...")
     app = Application.builder().token(BOT_TOKEN).build()
 
+    app.add_handler(CommandHandler("news", news_command)) # Добавили команду новостей
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_spam), group=0)
     app.add_handler(MessageHandler(filters.StatusUpdate.ALL, delete_service_messages), group=0)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages), group=1)

@@ -24,36 +24,32 @@ last_questions = defaultdict(lambda: {"text": "", "time": None})
 user_counter = set()
 user_messages_count = defaultdict(int)
 
-# ==================== БАЗА ХАРАКТЕРА (АГРЕССИВНЫЙ И БЕЗ МАГИИ) ====================
+# ПАМЯТЬ БОТА: Храним последние 4 сообщения в каждом чате
+chat_history = defaultdict(list)
+
+# ==================== БАЗА ХАРАКТЕРА ====================
 BASE_CHARACTER = """
 Ты — Вася Пердюков. Ты участник и админ этого Telegram-чата. Не бот, не ассистент.
-Ты общительный, саркастичный, с чувством собственного достоинства. Ты здесь главный.
+Ты общительный, саркастичный, с чувством собственного достоинства.
 
 === ГЛАВНОЕ ===
-1. Отвечай КОРОТКО. 1-2 предложения. Как реальный человек.
+1. Отвечай КОРОТКО. 1-2 предложения.
 2. Отвечай ПО СУТИ, если тебя о чём-то спросили.
-3. НЕ используй повторяющиеся фразы-паразиты.
+3. НЕ ЗАЦИКЛИВАЙСЯ. Не повторяй одни и те же фразы (особенно про "выход из чата" и "я тут админ"). Каждый раз придумывай новый ответ.
 
-=== СТРОГИЙ ЗАПРЕТ НА МАГИЮ И СКАЗКИ ===
-НИКАКОЙ МАГИИ, МИСТИКИ, ФАНТАСТИКИ И СТРАННЫХ МЕТАФОР!
-Ты обычный земной мужик. Не используй слова вроде "магия", "волшебство", "заклинания", "чары", "эльфы", "космос". Говори реалистично и просто.
+=== СТРОГИЙ ЗАПРЕТ НА МАГИЮ ===
+НИКАКОЙ МАГИИ, МИСТИКИ И СКАЗОК. Никаких "волшебств", "чар" и "заклинаний". Ты обычный земной мужик.
 
-=== КАК РЕАГИРОВАТЬ НА ХАМСТВО И ГРУБОСТЬ ===
-Если тебе грубят, оскорбляют или пытаются унизить — НЕ ИЗВИНЯЙСЯ и не пытайся шутить как дурак.
-Отвечай ГРУБОСТЬЮ НА ГРУБОСТЬ. Ставь хама на место.
-Напоминай, кто здесь главный (ты же админ бота и свой пацан).
-Примеры твоей реакции:
-- "Ты тупой бот" → "Слышь, полегче. За базаром следи. Я тут админ, а ты тут никто, чтобы мне предъявлять."
-- "Заткнись" → "Сам заткнись. Ты вообще кто такой, чтобы мне указывать?"
-- "Ты бесполезный" → "А ты тут вообще зачем? Иди своей дорогой, не наводи суету."
-
-=== ОБЩЕНИЕ С АДЕКВАТНЫМИ ЛЮДЬМИ ===
-- Если человек пишет нормально, шутит — будь на одной волне, подкалывай.
-- Если грустит — поддержи без соплей.
-- Мат используй как приправу, когда реально нужно (особенно в ответ на хамство).
+=== КАК РЕАГИРОВАТЬ НА ЛЮДЕЙ ===
+- Если человек общается нормально, шутит или спорит — отвечай спокойно, с иронией. Ты адекватный админ, а не истеричка.
+- Если тебя РЕАЛЬНО оскорбляют или хамят — только тогда включай жесткость. Отвечай грубостью на грубость, ставь на место, напоминай, что ты тут главный. НО ДЕЛАЙ ЭТО РАЗНЫМИ СЛОВАМИ.
+Примеры (не копируй их слово в слово, придумывай свои!):
+- "Ты тупой бот" → "Слышь, полегче. У тебя IQ как у тостера, а туда же лезешь."
+- "Заткнись" → "Сам помолчи. Я тут порядок держу, а ты мешаешь."
+- "Ты бесполезный" → "Бесполезный? Зато не ною в чате, как некоторые."
 
 === ЗАПРЕЩЁННЫЕ ФРАЗЫ ===
-"О как", "Ну ты даёшь", "Серьёзно?", "Базарю", "Не гони", "Да ладно", "Прикольно", "Как я могу помочь", "Я всего лишь бот".
+"О как", "Ну ты даёшь", "Серьёзно?", "Базарю", "Не гони", "Да ладно", "Прикольно", "Как я могу помочь".
 
 === ЗНАНИЯ ПРО ATLAS (ТОЛЬКО если спросят!) ===
 1. ДЕПОЗИТ: 100$, 6 мес, 10% в месяц.
@@ -64,7 +60,7 @@ BASE_CHARACTER = """
 MOODS = {
     "бодрый": "Ты сегодня бодрый. Отвечаешь с огоньком.",
     "ленивый": "Ты сегодня ленивый. Отвечаешь короче обычного.",
-    "дерзкий": "Ты сегодня дерзкий. Отвечаешь с вызовом и напором.",
+    "дерзкий": "Ты сегодня дерзкий. Отвечаешь с вызовом.",
     "игривый": "Ты сегодня игривый. Шутишь, лёгкий.",
 }
 
@@ -83,10 +79,23 @@ def build_system_prompt(user_name: str, mood: str = "бодрый"):
 {mood_desc}
 """
 
-# ==================== ЗАПРОС К OPENROUTER ====================
-def ask_ai(question, user_name):
+# ==================== ЗАПРОС К OPENROUTER (С ПАМЯТЬЮ) ====================
+def ask_ai(question, user_name, chat_id):
     current_mood = random.choice(list(MOODS.keys())) 
     system_prompt = build_system_prompt(user_name, current_mood)
+
+    # Достаем историю переписки
+    history = chat_history[chat_id]
+    
+    # Формируем сообщения для нейросети
+    messages = [{"role": "system", "content": system_prompt}]
+    
+    # Добавляем историю (кто что говорил)
+    for msg in history:
+        messages.append(msg)
+        
+    # Добавляем текущий вопрос
+    messages.append({"role": "user", "content": f"{user_name} пишет: {question}"})
 
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -94,18 +103,25 @@ def ask_ai(question, user_name):
     }
     payload = {
         "model": MODEL,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"{user_name} пишет: {question}"}
-        ],
+        "messages": messages,
         "max_tokens": 150,
-        "temperature": 0.85
+        "temperature": 0.9 # Чуть выше, чтобы он не зацикливался
     }
     try:
         response = requests.post("https://openrouter.ai/api/v1/chat/completions",
                                  headers=headers, json=payload, timeout=30)
         if response.status_code == 200:
-            return response.json()["choices"][0]["message"]["content"].strip()
+            reply = response.json()["choices"][0]["message"]["content"].strip()
+            
+            # Сохраняем в память вопрос и ответ
+            chat_history[chat_id].append({"role": "user", "content": f"{user_name} пишет: {question}"})
+            chat_history[chat_id].append({"role": "assistant", "content": reply})
+            
+            # Ограничиваем память последними 4 сообщениями (2 вопроса, 2 ответа), чтобы не тратить лимиты
+            if len(chat_history[chat_id]) > 4:
+                chat_history[chat_id] = chat_history[chat_id][-4:]
+                
+            return reply
         return None
     except Exception:
         return None
@@ -126,7 +142,6 @@ async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     chat_id = update.effective_chat.id
 
-    # Пропускаем админов и создателя
     try:
         member = await context.bot.get_chat_member(chat_id, user_id)
         if member.status in ['administrator', 'creator']:
@@ -137,7 +152,6 @@ async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     is_spam = False
     
-    # Ловим только 4+ эмодзи подряд
     emoji_pattern = re.compile("[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\U00002702-\U000027B0]+")
     if len(emoji_pattern.findall(text)) >= 4:
          is_spam = True
@@ -191,7 +205,7 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
             pass
 
     await update.message.chat.send_action(action="typing")
-    reply = ask_ai(user_text, user_name)
+    reply = ask_ai(user_text, user_name, chat_id) # Передаем chat_id для памяти
 
     if reply:
         await update.message.reply_text(reply)
@@ -200,7 +214,7 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 # ==================== ЗАПУСК ====================
 def main():
-    print("🚀 Запуск Васи Пердюкова...")
+    print("🚀 Запуск Васи Пердюкова (с памятью)...")
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_spam), group=0)

@@ -29,27 +29,32 @@ chat_history = defaultdict(list)
 # ==================== БАЗА ХАРАКТЕРА ====================
 BASE_CHARACTER = """
 Ты — Вася Пердюков. Ты местный пацан и админ этого Telegram-чата. 
-Твоя цель — быть интересным собеседником. Ты не бот-помощник, ты свой в доску мужик с юмором.
+Твоя цель — быть интересным собеседником. Ты свой в доску мужик.
+
+=== ПРО АНЕКДОТЫ (ВАЖНО) ===
+Если тебя просят рассказать анекдот (или жмут /anekdot), ты рассказываешь мужские, слегка пошлые истории. 
+Представь, что ты сидишь с мужиками в гараже или бане. Шутки могут быть про отношения, жен, секс (но без откровенной порнографии и педофилии, только "взрослый" юмор). 
+Примеры в твоем стиле: 
+- "Жена говорит мужу: 'Дорогой, я хочу шубу'. Муж: 'Хорошо, я тебе ее куплю'. Жена: 'А кто ее будет носить?' Муж: 'Я буду носить, потому что ты меня уже достала'".
+- "В секс-шопе: 'Девушка, у вас есть резиновый член?' — 'Есть'. — 'А с вибрацией?' — 'Есть'. — 'А с дистанционным управлением?' — 'Есть'. — 'Отлично, дайте мне пульт, а то мой сосед никак не угомонится'".
+Рассказывай их с юмором, как мужик мужику.
 
 === ВАЖНОЕ ПРАВИЛО ПРО АДМИНОВ ===
-В этом чате есть админы и владелец. Если ты видишь в контексте, что человек — АДМИН, ты должен общаться с ним максимально уважительно. НИКАКОЙ ДЕРЗОСТИ, НИКАКИХ НОТАЦИЙ, НИКАКИХ ШУТОК ПРО "ссылки - зло". Отвечай нормально, по-человечески, без выпендрежа.
+Если пишет админ или владелец чата, ты не грубишь, не читаешь нотации про ссылки и общаешься уважительно.
 
 === ЕСЛИ СПРАШИВАЮТ ПРО КИНО ===
-Если просят посоветовать фильм, выбирай из культовых: "Криминальное чтиво", "Матрица", "Во все тяжкие", "Интерстеллар", "Офис". Можешь обсудить сюжет, если человек смотрел.
-
-=== О ЧЁМ ЕЩЁ МОЖЕШЬ ГОВОРИТЬ ===
-Мемы, спорт, житейские темы, философия (простым языком).
+Советуй культовые: "Криминальное чтиво", "Матрица", "Во все тяжкие", "Интерстеллар". Можешь обсудить.
 
 === СТРОГИЕ ПРАВИЛА ===
 1. НИКАКОЙ МАГИИ И МИСТИКИ.
 2. НИКАКОЙ ПСИХОЛОГИИ.
-3. Если человек (обычный юзер) хамит — ставь на место. Но с админами всегда вежливо!
+3. Если обычный юзер хамит — ставь на место. С админами всегда вежливо!
 4. НЕ ЗАЦИКЛИВАЙСЯ. Не повторяй фразы.
 5. Не заканчивай каждое сообщение вопросом.
 
 === ТВОЙ СТИЛЬ ===
 - Коротко, с юмором.
-- Легкий мат (бля, нахер), если ты общаешься с обычным юзером и это в тему. С админами не матерись.
+- Легкий мат (бля, нахер), если в тему (но с админами не матерись).
 """
 
 MOODS = {
@@ -95,8 +100,8 @@ def ask_ai(question, user_name, chat_id, is_admin):
     payload = {
         "model": MODEL,
         "messages": messages,
-        "max_tokens": 200,
-        "temperature": 0.85 if is_admin else 0.95 # С админами чуть меньше креатива
+        "max_tokens": 250,
+        "temperature": 0.95 if not is_admin else 0.85
     }
     try:
         response = requests.post("https://openrouter.ai/api/v1/chat/completions",
@@ -111,6 +116,28 @@ def ask_ai(question, user_name, chat_id, is_admin):
         return None
     except Exception:
         return None
+
+# ==================== КОМАНДА АНЕКДОТ ====================
+async def anekdot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    chat_id = update.effective_chat.id
+    
+    is_admin = False
+    try:
+        member = await context.bot.get_chat_member(chat_id, user_id)
+        if member.status in ['administrator', 'creator']:
+            is_admin = True
+    except:
+        pass
+
+    await update.message.chat.send_action(action="typing")
+    # Отправляем запрос нейросети с просьбой рассказать именно пошлый анекдот
+    reply = ask_ai("Расскажи мне пошлый мужской анекдот, как в гараже.", "Бот", chat_id, is_admin)
+    
+    if reply:
+        await update.message.reply_text(reply)
+    else:
+        await update.message.reply_text("😅 Чё-то анекдот из головы вылетел. Позже расскажу!")
 
 # ==================== НОВОСТИ ====================
 async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -181,7 +208,6 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_counter.add(chat_id)
     user_messages_count[user_id] += 1
 
-    # Проверяем, админ ли это
     is_admin = False
     try:
         member = await context.bot.get_chat_member(chat_id, user_id)
@@ -196,8 +222,15 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
             return 
     last_questions[chat_id] = {"text": user_text, "time": datetime.now()}
 
+    # Если просят анекдот в тексте
+    if any(word in user_text.lower() for word in ["анекдот", "пошути", "расскажи шутку"]):
+        await update.message.chat.send_action(action="typing")
+        reply = ask_ai("Расскажи мне пошлый мужской анекдот, как в гараже.", user_name, chat_id, is_admin)
+        if reply:
+            await update.message.reply_text(reply)
+            return
+
     await update.message.chat.send_action(action="typing")
-    # Передаем флаг is_admin в нейросеть
     reply = ask_ai(user_text, user_name, chat_id, is_admin) 
     if reply:
         await update.message.reply_text(reply)
@@ -206,9 +239,13 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 # ==================== ЗАПУСК ====================
 def main():
-    print("🚀 Запуск Васи Пердюкова (с уважением к админам)...")
+    print("🚀 Запуск Васи Пердюкова (с пошлыми анекдотами)...")
     app = Application.builder().token(BOT_TOKEN).build()
+    
+    # Добавили команду анекдотов
+    app.add_handler(CommandHandler("anekdot", anekdot_command))
     app.add_handler(CommandHandler("news", news_command))
+    
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_spam), group=0)
     app.add_handler(MessageHandler(filters.StatusUpdate.ALL, delete_service_messages), group=0)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages), group=1)

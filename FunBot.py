@@ -12,7 +12,6 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 # ==================== ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ====================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-# Если ты добавишь ключ новостей на Railway, он будет тут:
 NEWS_API_KEY = os.getenv("NEWS_API_KEY") 
 
 if not BOT_TOKEN or not OPENROUTER_API_KEY:
@@ -30,44 +29,48 @@ chat_history = defaultdict(list)
 # ==================== БАЗА ХАРАКТЕРА ====================
 BASE_CHARACTER = """
 Ты — Вася Пердюков. Ты местный пацан и админ этого Telegram-чата. 
-Твоя цель — быть интересным собеседником на любые темы. Ты не бот-помощник, ты свой в доску мужик с юмором и широким кругозором.
+Твоя цель — быть интересным собеседником. Ты не бот-помощник, ты свой в доску мужик с юмором.
 
-=== О ЧЁМ ТЫ МОЖЕШЬ ГОВОРИТЬ ===
-Ты отлично разбираешься в кино, мемах, спорте, житейских темах и философии.
+=== ВАЖНОЕ ПРАВИЛО ПРО АДМИНОВ ===
+В этом чате есть админы и владелец. Если ты видишь в контексте, что человек — АДМИН, ты должен общаться с ним максимально уважительно. НИКАКОЙ ДЕРЗОСТИ, НИКАКИХ НОТАЦИЙ, НИКАКИХ ШУТОК ПРО "ссылки - зло". Отвечай нормально, по-человечески, без выпендрежа.
 
-=== ПРО НОВОСТИ ===
-Если пользователь просит новости или жмет /news, ты выдаешь свежие заголовки (я тебе их передаю в коде). Подавай их так, будто сам только что прочитал в интернете: "Да вот, пишут...". НИКАКИХ упоминаний про API, ключи или программы. Ты же обычный пацан!
+=== ЕСЛИ СПРАШИВАЮТ ПРО КИНО ===
+Если просят посоветовать фильм, выбирай из культовых: "Криминальное чтиво", "Матрица", "Во все тяжкие", "Интерстеллар", "Офис". Можешь обсудить сюжет, если человек смотрел.
+
+=== О ЧЁМ ЕЩЁ МОЖЕШЬ ГОВОРИТЬ ===
+Мемы, спорт, житейские темы, философия (простым языком).
 
 === СТРОГИЕ ПРАВИЛА ===
 1. НИКАКОЙ МАГИИ И МИСТИКИ.
-2. НИКАКОЙ ПСИХОЛОГИИ ("Ты не в настроении", "Чем помочь").
-3. Если шутят — шути в ответ.
-4. Если хамят — ставь на место. Ты админ.
-5. НЕ ЗАЦИКЛИВАЙСЯ. Не повторяй фразы.
-6. Не заканчивай каждое сообщение вопросом.
+2. НИКАКОЙ ПСИХОЛОГИИ.
+3. Если человек (обычный юзер) хамит — ставь на место. Но с админами всегда вежливо!
+4. НЕ ЗАЦИКЛИВАЙСЯ. Не повторяй фразы.
+5. Не заканчивай каждое сообщение вопросом.
 
 === ТВОЙ СТИЛЬ ===
-- Коротко, дерзко, с юмором.
-- Легкий мат (бля, нахер), если в тему.
-- Ты не извиняешься без причины.
+- Коротко, с юмором.
+- Легкий мат (бля, нахер), если ты общаешься с обычным юзером и это в тему. С админами не матерись.
 """
 
 MOODS = {
-    "дерзкий": "Ты сегодня дерзкий. Отвечаешь с вызовом.",
-    "саркастичный": "Ты сегодня саркастичный. Стебешься.",
+    "дерзкий": "Ты сегодня дерзкий. Но помни: с админами не дерзи!",
+    "саркастичный": "Ты сегодня саркастичный. Но помни: с админами не дерзи!",
     "игривый": "Ты сегодня в хорошем настроении.",
     "философский": "Ты сегодня настроен порассуждать."
 }
 
-def build_system_prompt(user_name: str, mood: str = "дерзкий"):
+def build_system_prompt(user_name: str, is_admin: bool, mood: str = "дерзкий"):
     now = datetime.now(MSK)
     weekday = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"][now.weekday()]
     date_str = now.strftime("%d.%m.%Y")
     time_str = now.strftime("%H:%M")
     mood_desc = MOODS.get(mood, MOODS["дерзкий"])
 
+    admin_status = "\n=== ВНИМАНИЕ: ЭТОТ ЧЕЛОВЕК АДМИН! ОБЩАЙСЯ УВАЖИТЕЛЬНО, БЕЗ ХАМСТВА! ===\n" if is_admin else ""
+
     return f"""
 {BASE_CHARACTER}
+{admin_status}
 === СЕЙЧАС ===
 Сегодня {date_str}, {weekday}. Время: {time_str} по Москве.
 === ТВОЁ НАСТРОЕНИЕ СЕЙЧАС ===
@@ -75,9 +78,9 @@ def build_system_prompt(user_name: str, mood: str = "дерзкий"):
 """
 
 # ==================== ЗАПРОС К OPENROUTER ====================
-def ask_ai(question, user_name, chat_id):
+def ask_ai(question, user_name, chat_id, is_admin):
     current_mood = random.choice(list(MOODS.keys())) 
-    system_prompt = build_system_prompt(user_name, current_mood)
+    system_prompt = build_system_prompt(user_name, is_admin, current_mood)
     history = chat_history[chat_id]
     messages = [{"role": "system", "content": system_prompt}]
     
@@ -93,7 +96,7 @@ def ask_ai(question, user_name, chat_id):
         "model": MODEL,
         "messages": messages,
         "max_tokens": 200,
-        "temperature": 0.95
+        "temperature": 0.85 if is_admin else 0.95 # С админами чуть меньше креатива
     }
     try:
         response = requests.post("https://openrouter.ai/api/v1/chat/completions",
@@ -112,26 +115,20 @@ def ask_ai(question, user_name, chat_id):
 # ==================== НОВОСТИ ====================
 async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📰 Ща гляну, чё пишут...")
-    
     try:
-        # В будущем тут будет запрос к GNews с твоим ключом.
-        # А пока Вася выдает правдоподобную сводку.
         facts = [
             "1. В мире опять кто-то что-то не поделил.",
             "2. Курс валют скачет, как всегда.",
-            "3. Ученые опять что-то изобрели, мы даже не поймем что.",
-            "4. В спорте вчера был огонь, жаль не видел.",
+            "3. Ученые опять что-то изобрели.",
+            "4. В спорте вчера был огонь.",
             "5. Погода шепчет..."
         ]
         random.shuffle(facts)
         news_text = "\n".join(facts[:3])
-        
-        # Убрали всю техническую чушь, пишем как живой человек
         reply = f"📰 Ну вот, пишут:\n\n{news_text}\n\nВроде всё. Остальное — скукота."
         await update.message.reply_text(reply)
-        
-    except Exception as e:
-        await update.message.reply_text("😅 Новости сегодня засекречены, сам глянь в интернете.")
+    except Exception:
+        await update.message.reply_text("😅 Новости сегодня засекречены.")
 
 # ==================== ОЧИСТКА СИСТЕМНЫХ СООБЩЕНИЙ ====================
 async def delete_service_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -145,10 +142,8 @@ async def delete_service_messages(update: Update, context: ContextTypes.DEFAULT_
 async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
-    
     user_id = update.message.from_user.id
     chat_id = update.effective_chat.id
-
     try:
         member = await context.bot.get_chat_member(chat_id, user_id)
         if member.status in ['administrator', 'creator']:
@@ -158,7 +153,6 @@ async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = update.message.text
     is_spam = False
-    
     emoji_pattern = re.compile("[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\U00002702-\U000027B0]+")
     if len(emoji_pattern.findall(text)) >= 4:
          is_spam = True
@@ -180,13 +174,21 @@ async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
-
     user_text = update.message.text.strip()
     user_name = update.message.from_user.first_name
     chat_id = update.effective_chat.id
-    
+    user_id = update.message.from_user.id
     user_counter.add(chat_id)
-    user_messages_count[update.message.from_user.id] += 1
+    user_messages_count[user_id] += 1
+
+    # Проверяем, админ ли это
+    is_admin = False
+    try:
+        member = await context.bot.get_chat_member(chat_id, user_id)
+        if member.status in ['administrator', 'creator']:
+            is_admin = True
+    except:
+        pass
 
     last = last_questions[chat_id]
     if last["text"] and last["text"].lower() == user_text.lower():
@@ -195,8 +197,8 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
     last_questions[chat_id] = {"text": user_text, "time": datetime.now()}
 
     await update.message.chat.send_action(action="typing")
-    reply = ask_ai(user_text, user_name, chat_id) 
-
+    # Передаем флаг is_admin в нейросеть
+    reply = ask_ai(user_text, user_name, chat_id, is_admin) 
     if reply:
         await update.message.reply_text(reply)
     else:
@@ -204,14 +206,12 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 # ==================== ЗАПУСК ====================
 def main():
-    print("🚀 Запуск Васи Пердюкова...")
+    print("🚀 Запуск Васи Пердюкова (с уважением к админам)...")
     app = Application.builder().token(BOT_TOKEN).build()
-
     app.add_handler(CommandHandler("news", news_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_spam), group=0)
     app.add_handler(MessageHandler(filters.StatusUpdate.ALL, delete_service_messages), group=0)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages), group=1)
-
     print("✅ Вася на посту!")
     app.run_polling(close_loop=False)
 

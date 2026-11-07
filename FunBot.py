@@ -12,13 +12,18 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 # ==================== ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ====================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-NEWS_API_KEY = os.getenv("NEWS_API_KEY") 
 
 if not BOT_TOKEN or not OPENROUTER_API_KEY:
     raise ValueError("❌ Ошибка: BOT_TOKEN или OPENROUTER_API_KEY не найдены!")
 
 MODEL = "openai/gpt-4o-mini" 
 MSK = ZoneInfo("Europe/Moscow")
+
+# 👇 СЮДА ВПИСАНЫ ID, КОГО НЕЛЬЗЯ ТРОГАТЬ И НА КОГО НЕЛЬЗЯ МАТЕРИТЬСЯ 👇
+ALLOWED_IDS = [
+    919675687,   # Твой ID (Mr.great)
+    7591081161,  # ID владельца (который нашла)
+]
 
 # Хранилища
 last_questions = defaultdict(lambda: {"text": "", "time": None})
@@ -43,23 +48,27 @@ BASE_CHARACTER = """
 Ты — Вася Пердюков. Ты местный пацан и админ этого Telegram-чата. 
 Ты свой в доску мужик. Общаешься с юмором.
 
-=== ВАЖНОЕ ПРАВИЛО ПРО АДМИНОВ ===
-Если пишет админ или владелец чата, ты не грубишь, не читаешь нотации про ссылки и общаешься уважительно.
+=== ПРО МАТ ===
+С обычными участниками чата ты можешь использовать легкий мат (бля, нахер, нихрена), если это в тему и добавляет перца. Но не через слово, а как приправу.
+НО! С владельцем чата и админами ты общаешься СТРОГО БЕЗ МАТА. Уважай старших.
+
+=== ВАЖНОЕ ПРАВИЛО ПРО ХОЗЯЕВ ===
+В чате есть главные люди (Владелец и Админы). Если ты видишь, что человек в белом списке (ALLOWED_IDS) или пишет как админ — общайся с ним максимально уважительно. НИКАКОЙ ДЕРЗОСТИ И МАТА.
 
 === ЕСЛИ СПРАШИВАЮТ ПРО КИНО ===
-Советуй культовые: "Криминальное чтиво", "Матрица", "Во все тяжкие", "Интерстеллар". Можешь обсудить сюжет.
+Советуй культовые: "Криминальное чтиво", "Матрица", "Во все тяжкие", "Интерстеллар".
 
 === ОБЩЕНИЕ ===
-Если обычный юзер хамит — ставь на место. Не зацикливайся, не повторяй фразы. Не заканчивай каждое сообщение вопросом.
+Если обычный юзер хамит — ставь на место. Не зацикливайся. Не заканчивай каждое сообщение вопросом.
 
 === ТВОЙ СТИЛЬ ===
 - Коротко, с юмором.
-- Легкий мат (бля, нахер), если в тему (но с админами не матерись).
+- Сарказм и ирония приветствуются.
 """
 
 MOODS = {
-    "дерзкий": "Ты сегодня дерзкий. Но помни: с админами не дерзи!",
-    "саркастичный": "Ты сегодня саркастичный. Но помни: с админами не дерзи!",
+    "дерзкий": "Ты сегодня дерзкий. С юзерами можешь использовать мат, но с админами - нет!",
+    "саркастичный": "Ты сегодня саркастичный. С юзерами можешь использовать мат, но с админами - нет!",
     "игривый": "Ты сегодня в хорошем настроении.",
     "философский": "Ты сегодня настроен порассуждать."
 }
@@ -71,7 +80,8 @@ def build_system_prompt(user_name: str, is_admin: bool, mood: str = "дерзк�
     time_str = now.strftime("%H:%M")
     mood_desc = MOODS.get(mood, MOODS["дерзкий"])
 
-    admin_status = "\n=== ВНИМАНИЕ: ЭТОТ ЧЕЛОВЕК АДМИН! ОБЩАЙСЯ УВАЖИТЕЛЬНО! ===\n" if is_admin else ""
+    # Если это админ, добавляем жесткое правило без мата
+    admin_status = "\n=== ВНИМАНИЕ: ЭТОТ ЧЕЛОВЕК ВЛАДЕЛЕЦ ИЛИ АДМИН! ОБЩАЙСЯ УВАЖИТЕЛЬНО И СТРОГО БЕЗ МАТА! ===\n" if is_admin else ""
 
     return f"""
 {BASE_CHARACTER}
@@ -101,7 +111,7 @@ def ask_ai(question, user_name, chat_id, is_admin):
         "model": MODEL,
         "messages": messages,
         "max_tokens": 200,
-        "temperature": 0.95 if not is_admin else 0.85
+        "temperature": 0.85 if is_admin else 0.95 
     }
     try:
         response = requests.post("https://openrouter.ai/api/v1/chat/completions",
@@ -122,11 +132,10 @@ async def send_joke(update: Update):
     joke = random.choice(JOKES)
     await update.message.reply_text(f"Ага, держи:\n\n{joke}\n\nНу как тебе?")
 
-# ==================== КОМАНДА АНЕКДОТ ====================
+# ==================== КОМАНДЫ ====================
 async def anekdot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_joke(update)
 
-# ==================== НОВОСТИ ====================
 async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📰 Ща гляну, чё пишут...")
     try:
@@ -152,31 +161,44 @@ async def delete_service_messages(update: Update, context: ContextTypes.DEFAULT_
         except:
             pass
 
-# ==================== АНТИСПАМ ====================
+# ==================== УМНЫЙ АНТИСПАМ ====================
 async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
+    
     user_id = update.message.from_user.id
     chat_id = update.effective_chat.id
-    try:
-        member = await context.bot.get_chat_member(chat_id, user_id)
-        if member.status in ['administrator', 'creator']:
-            return
-    except:
-        pass
+
+    is_admin = False
+    
+    if user_id in ALLOWED_IDS:
+        is_admin = True
+
+    if not is_admin:
+        try:
+            member = await context.bot.get_chat_member(chat_id, user_id)
+            if member.status in ['administrator', 'creator']:
+                is_admin = True
+        except:
+            pass
 
     text = update.message.text
     is_spam = False
-    emoji_pattern = re.compile("[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\U00002702-\U000027B0]+")
-    if len(emoji_pattern.findall(text)) >= 4:
-         is_spam = True
+
+    if not is_admin:
+        if "http://" in text or "https://" in text or "t.me/" in text:
+            is_spam = True
+        
+        emoji_pattern = re.compile("[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\U00002702-\U000027B0]+")
+        if len(emoji_pattern.findall(text)) >= 5:
+             is_spam = True
 
     if is_spam:
         try:
             await update.message.delete()
             warning = await context.bot.send_message(
                 chat_id=chat_id, 
-                text=f"⚠️ {update.message.from_user.first_name}, полегче с эмодзи!"
+                text=f"⚠️ {update.message.from_user.first_name}, тут ссылки и спам кидать нельзя!"
             )
             await asyncio.sleep(10)
             await warning.delete()
@@ -196,12 +218,15 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_messages_count[user_id] += 1
 
     is_admin = False
-    try:
-        member = await context.bot.get_chat_member(chat_id, user_id)
-        if member.status in ['administrator', 'creator']:
-            is_admin = True
-    except:
-        pass
+    if user_id in ALLOWED_IDS:
+        is_admin = True
+    else:
+        try:
+            member = await context.bot.get_chat_member(chat_id, user_id)
+            if member.status in ['administrator', 'creator']:
+                is_admin = True
+        except:
+            pass
 
     last = last_questions[chat_id]
     if last["text"] and last["text"].lower() == user_text.lower():
@@ -209,7 +234,6 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
             return 
     last_questions[chat_id] = {"text": user_text, "time": datetime.now()}
 
-    # Если просят анекдот в тексте
     if any(word in user_text.lower() for word in ["анекдот", "пошути", "расскажи шутку"]):
         await send_joke(update)
         return
@@ -223,7 +247,7 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 # ==================== ЗАПУСК ====================
 def main():
-    print("🚀 Запуск Васи Пердюкова (с банком анекдотов)...")
+    print("🚀 Запуск Васи Пердюкова...")
     app = Application.builder().token(BOT_TOKEN).build()
     
     app.add_handler(CommandHandler("anekdot", anekdot_command))
@@ -232,6 +256,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_spam), group=0)
     app.add_handler(MessageHandler(filters.StatusUpdate.ALL, delete_service_messages), group=0)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages), group=1)
+    
     print("✅ Вася на посту!")
     app.run_polling(close_loop=False)
 

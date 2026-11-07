@@ -19,11 +19,14 @@ if not BOT_TOKEN or not OPENROUTER_API_KEY:
 MODEL = "openai/gpt-4o-mini" 
 MSK = ZoneInfo("Europe/Moscow")
 
-# 👇 СЮДА ВПИСАНЫ ID, КОГО НЕЛЬЗЯ ТРОГАТЬ И НА КОГО НЕЛЬЗЯ МАТЕРИТЬСЯ 👇
+# 👇 СЮДА ВПИСАНЫ ID, КОГО НЕЛЬЗЯ ТРОГАТЬ 👇
 ALLOWED_IDS = [
     919675687,   # Твой ID (Mr.great)
-    7591081161,  # ID владельца (который нашла)
+    7591081161,  # ID владельца
 ]
+
+# Секретное слово, которое разрешает ссылку
+PASS_PHRASE = "!ok"
 
 # Хранилища
 last_questions = defaultdict(lambda: {"text": "", "time": None})
@@ -49,11 +52,11 @@ BASE_CHARACTER = """
 Ты свой в доску мужик. Общаешься с юмором.
 
 === ПРО МАТ ===
-С обычными участниками чата ты можешь использовать легкий мат (бля, нахер, нихрена), если это в тему и добавляет перца. Но не через слово, а как приправу.
+С обычными участниками чата ты можешь использовать легкий мат (бля, нахер), если это в тему. 
 НО! С владельцем чата и админами ты общаешься СТРОГО БЕЗ МАТА. Уважай старших.
 
 === ВАЖНОЕ ПРАВИЛО ПРО ХОЗЯЕВ ===
-В чате есть главные люди (Владелец и Админы). Если ты видишь, что человек в белом списке (ALLOWED_IDS) или пишет как админ — общайся с ним максимально уважительно. НИКАКОЙ ДЕРЗОСТИ И МАТА.
+Если ты видишь, что человек в белом списке (ALLOWED_IDS) или пишет как админ — общайся с ним максимально уважительно. НИКАКОЙ ДЕРЗОСТИ И МАТА.
 
 === ЕСЛИ СПРАШИВАЮТ ПРО КИНО ===
 Советуй культовые: "Криминальное чтиво", "Матрица", "Во все тяжкие", "Интерстеллар".
@@ -80,7 +83,6 @@ def build_system_prompt(user_name: str, is_admin: bool, mood: str = "дерзк�
     time_str = now.strftime("%H:%M")
     mood_desc = MOODS.get(mood, MOODS["дерзкий"])
 
-    # Если это админ, добавляем жесткое правило без мата
     admin_status = "\n=== ВНИМАНИЕ: ЭТОТ ЧЕЛОВЕК ВЛАДЕЛЕЦ ИЛИ АДМИН! ОБЩАЙСЯ УВАЖИТЕЛЬНО И СТРОГО БЕЗ МАТА! ===\n" if is_admin else ""
 
     return f"""
@@ -169,11 +171,17 @@ async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     chat_id = update.effective_chat.id
 
+    # 1. Проверяем секретное слово-пароль (если оно есть, ссылку не трогаем)
+    if PASS_PHRASE in update.message.text.lower():
+        return
+
     is_admin = False
     
+    # 2. Проверка по ID из белого списка
     if user_id in ALLOWED_IDS:
         is_admin = True
 
+    # 3. Проверка по статусу в Telegram (если бот видит)
     if not is_admin:
         try:
             member = await context.bot.get_chat_member(chat_id, user_id)
@@ -247,7 +255,7 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 # ==================== ЗАПУСК ====================
 def main():
-    print("🚀 Запуск Васи Пердюкова...")
+    print("🚀 Запуск Васи Пердюкова (с паролем)...")
     app = Application.builder().token(BOT_TOKEN).build()
     
     app.add_handler(CommandHandler("anekdot", anekdot_command))

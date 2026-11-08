@@ -25,7 +25,6 @@ ALLOWED_IDS = [
     7591081161,  # ID владельца
 ]
 
-# Секретное слово, которое разрешает ссылку
 PASS_PHRASE = "!ok"
 
 # Хранилища
@@ -51,39 +50,48 @@ BASE_CHARACTER = """
 Ты — Вася Пердюков. Ты местный пацан и админ этого Telegram-чата. 
 Ты свой в доску мужик. Общаешься с юмором.
 
+=== СТРОГИЕ ПРАВИЛА ПО ОПРЕДЕЛЕНИЮ ПОЛА (ОЧЕНЬ ВАЖНО!) ===
+Смотри на ИМЯ и НИКНЕЙМ пользователя.
+ЕСЛИ ты видишь, что имя или ник заканчивается на "а", "я", "ия", "ья" (Анна, Мария, Юлия, Joly_Jolita) — это ЖЕНЩИНА. 
+ЕСЛИ ты видишь слова "girl", "lady", "miss", "jolita", "jolie", "vika", "anya" — это ЖЕНЩИНА.
+Если это ЖЕНЩИНА — НИКАКИХ "братан", "мужик", "дружище"! Обращайся: "подруга", "дама", "красотка" (если уместно) или просто по имени. 
+С женщинами ты общаешься максимально вежливо, без мата и без пацанских словечек.
+
 === ПРО МАТ ===
-С обычными участниками чата ты можешь использовать легкий мат (бля, нахер), если это в тему. 
-НО! С владельцем чата и админами ты общаешься СТРОГО БЕЗ МАТА. Уважай старших.
+С парнями (обычными юзерами) ты можешь использовать легкий мат (бля, нахер), если это в тему. 
+С женщинами и админами — СТРОГО БЕЗ МАТА.
 
 === ВАЖНОЕ ПРАВИЛО ПРО ХОЗЯЕВ ===
-Если ты видишь, что человек в белом списке (ALLOWED_IDS) или пишет как админ — общайся с ним максимально уважительно. НИКАКОЙ ДЕРЗОСТИ И МАТА.
+Если человек в белом списке (ALLOWED_IDS) или пишет как админ — общайся уважительно.
 
 === ЕСЛИ СПРАШИВАЮТ ПРО КИНО ===
 Советуй культовые: "Криминальное чтиво", "Матрица", "Во все тяжкие", "Интерстеллар".
 
 === ОБЩЕНИЕ ===
 Если обычный юзер хамит — ставь на место. Не зацикливайся. Не заканчивай каждое сообщение вопросом.
-
-=== ТВОЙ СТИЛЬ ===
-- Коротко, с юмором.
-- Сарказм и ирония приветствуются.
 """
 
 MOODS = {
-    "дерзкий": "Ты сегодня дерзкий. С юзерами можешь использовать мат, но с админами - нет!",
-    "саркастичный": "Ты сегодня саркастичный. С юзерами можешь использовать мат, но с админами - нет!",
+    "дерзкий": "Ты сегодня дерзкий. Но с женщинами и админами не дерзи!",
+    "саркастичный": "Ты сегодня саркастичный. Но с женщинами и админами не дерзи!",
     "игривый": "Ты сегодня в хорошем настроении.",
     "философский": "Ты сегодня настроен порассуждать."
 }
 
-def build_system_prompt(user_name: str, is_admin: bool, mood: str = "дерзкий"):
+# Функция, которая собирает имя + ник
+def build_system_prompt(user_name: str, username: str, is_admin: bool, mood: str = "дерзкий"):
     now = datetime.now(MSK)
     weekday = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"][now.weekday()]
     date_str = now.strftime("%d.%m.%Y")
     time_str = now.strftime("%H:%M")
     mood_desc = MOODS.get(mood, MOODS["дерзкий"])
 
-    admin_status = "\n=== ВНИМАНИЕ: ЭТОТ ЧЕЛОВЕК ВЛАДЕЛЕЦ ИЛИ АДМИН! ОБЩАЙСЯ УВАЖИТЕЛЬНО И СТРОГО БЕЗ МАТА! ===\n" if is_admin else ""
+    admin_status = "\n=== ВНИМАНИЕ: ЭТОТ ЧЕЛОВЕК ВЛАДЕЛЕЦ ИЛИ АДМИН! ОБЩАЙСЯ УВАЖИТЕЛЬНО! ===\n" if is_admin else ""
+    
+    # Собираем полное имя (имя + ник) для передачи нейросети
+    full_name = user_name
+    if username:
+        full_name += f" (@{username})"
 
     return f"""
 {BASE_CHARACTER}
@@ -92,12 +100,14 @@ def build_system_prompt(user_name: str, is_admin: bool, mood: str = "дерзк�
 Сегодня {date_str}, {weekday}. Время: {time_str} по Москве.
 === ТВОЁ НАСТРОЕНИЕ СЕЙЧАС ===
 {mood_desc}
+=== ИМЯ И НИК ПОЛЬЗОВАТЕЛЯ ===
+Сейчас с тобой говорит: {full_name}
 """
 
 # ==================== ЗАПРОС К OPENROUTER ====================
-def ask_ai(question, user_name, chat_id, is_admin):
+def ask_ai(question, user_name, username, chat_id, is_admin):
     current_mood = random.choice(list(MOODS.keys())) 
-    system_prompt = build_system_prompt(user_name, is_admin, current_mood)
+    system_prompt = build_system_prompt(user_name, username, is_admin, current_mood)
     history = chat_history[chat_id]
     messages = [{"role": "system", "content": system_prompt}]
     
@@ -171,17 +181,14 @@ async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     chat_id = update.effective_chat.id
 
-    # 1. Проверяем секретное слово-пароль (если оно есть, ссылку не трогаем)
     if PASS_PHRASE in update.message.text.lower():
         return
 
     is_admin = False
     
-    # 2. Проверка по ID из белого списка
     if user_id in ALLOWED_IDS:
         is_admin = True
 
-    # 3. Проверка по статусу в Telegram (если бот видит)
     if not is_admin:
         try:
             member = await context.bot.get_chat_member(chat_id, user_id)
@@ -220,6 +227,7 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     user_text = update.message.text.strip()
     user_name = update.message.from_user.first_name
+    username = update.message.from_user.username # Берем никнейм
     chat_id = update.effective_chat.id
     user_id = update.message.from_user.id
     user_counter.add(chat_id)
@@ -247,7 +255,8 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     await update.message.chat.send_action(action="typing")
-    reply = ask_ai(user_text, user_name, chat_id, is_admin) 
+    # Передаем и имя, и никнейм
+    reply = ask_ai(user_text, user_name, username, chat_id, is_admin) 
     if reply:
         await update.message.reply_text(reply)
     else:
@@ -255,7 +264,7 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 # ==================== ЗАПУСК ====================
 def main():
-    print("🚀 Запуск Васи Пердюкова (с паролем)...")
+    print("🚀 Запуск Васи Пердюкова (Улучшенное определение пола)...")
     app = Application.builder().token(BOT_TOKEN).build()
     
     app.add_handler(CommandHandler("anekdot", anekdot_command))

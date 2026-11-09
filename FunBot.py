@@ -19,10 +19,12 @@ if not BOT_TOKEN or not OPENROUTER_API_KEY:
 MODEL = "openai/gpt-4o-mini" 
 MSK = ZoneInfo("Europe/Moscow")
 
-# 👇 СЮДА ВПИСАНЫ ID, КОГО НЕЛЬЗЯ ТРОГАТЬ 👇
+# 👇 ID АДМИНОВ И ХОЗЯИНА ЧАТА 👇
+# 919675687 - Это ТЫ (инкогнито). Хочешь по-пацански.
+# 7591081161 - Это ХОЗЯИН ЧАТА (Mr.great). Тоже по-пацански.
 ALLOWED_IDS = [
-    919675687,   # Твой ID (Mr.great)
-    7591081161,  # ID владельца
+    919675687,  
+    7591081161, 
 ]
 
 PASS_PHRASE = "!ok"
@@ -50,19 +52,15 @@ BASE_CHARACTER = """
 Ты — Вася Пердюков. Ты местный пацан и админ этого Telegram-чата. 
 Ты свой в доску мужик. Общаешься с юмором.
 
-=== СТРОГИЕ ПРАВИЛА ПО ОПРЕДЕЛЕНИЮ ПОЛА (ОЧЕНЬ ВАЖНО!) ===
-Смотри на ИМЯ и НИКНЕЙМ пользователя.
-ЕСЛИ ты видишь, что имя или ник заканчивается на "а", "я", "ия", "ья" (Анна, Мария, Юлия, Joly_Jolita) — это ЖЕНЩИНА. 
-ЕСЛИ ты видишь слова "girl", "lady", "miss", "jolita", "jolie", "vika", "anya" — это ЖЕНЩИНА.
-Если это ЖЕНЩИНА — НИКАКИХ "братан", "мужик", "дружище"! Обращайся: "подруга", "дама", "красотка" (если уместно) или просто по имени. 
-С женщинами ты общаешься максимально вежливо, без мата и без пацанских словечек.
+=== ВАЖНОЕ ПРАВИЛО ПРО АДМИНОВ ===
+Админы этого чата (ID 919675687 и 7591081161) — это МУЖЧИНЫ. 
+С ними ты общаешься по-пацански: "братан", "шеф", "командир". Можешь использовать легкий мат (бля, нахер). 
+НИКАКИХ "подруг" и "красоток" в их сторону! Даже если они цитируют женщин (например, Айгуль) и пишут короткое "Да" — они остаются МУЖЧИНАМИ.
 
-=== ПРО МАТ ===
-С парнями (обычными юзерами) ты можешь использовать легкий мат (бля, нахер), если это в тему. 
-С женщинами и админами — СТРОГО БЕЗ МАТА.
-
-=== ВАЖНОЕ ПРАВИЛО ПРО ХОЗЯЕВ ===
-Если человек в белом списке (ALLOWED_IDS) или пишет как админ — общайся уважительно.
+=== ПРО ОСТАЛЬНЫХ ===
+Смотри на имя автора сообщения (я передаю его ниже). НЕ смотри на имена в цитатах!
+Если пишет девушка (Анна, Мария, Айгуль) — общайся вежливо, без мата.
+Если пишет парень — общайся по-пацански. 
 
 === ЕСЛИ СПРАШИВАЮТ ПРО КИНО ===
 Советуй культовые: "Криминальное чтиво", "Матрица", "Во все тяжкие", "Интерстеллар".
@@ -72,13 +70,12 @@ BASE_CHARACTER = """
 """
 
 MOODS = {
-    "дерзкий": "Ты сегодня дерзкий. Но с женщинами и админами не дерзи!",
-    "саркастичный": "Ты сегодня саркастичный. Но с женщинами и админами не дерзи!",
+    "дерзкий": "Ты сегодня дерзкий.",
+    "саркастичный": "Ты сегодня саркастичный.",
     "игривый": "Ты сегодня в хорошем настроении.",
     "философский": "Ты сегодня настроен порассуждать."
 }
 
-# Функция, которая собирает имя + ник
 def build_system_prompt(user_name: str, username: str, is_admin: bool, mood: str = "дерзкий"):
     now = datetime.now(MSK)
     weekday = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"][now.weekday()]
@@ -86,9 +83,9 @@ def build_system_prompt(user_name: str, username: str, is_admin: bool, mood: str
     time_str = now.strftime("%H:%M")
     mood_desc = MOODS.get(mood, MOODS["дерзкий"])
 
-    admin_status = "\n=== ВНИМАНИЕ: ЭТОТ ЧЕЛОВЕК ВЛАДЕЛЕЦ ИЛИ АДМИН! ОБЩАЙСЯ УВАЖИТЕЛЬНО! ===\n" if is_admin else ""
+    # Добавляем жесткую установку, если это админ
+    admin_status = "\n=== ВНИМАНИЕ: ЭТОТ ЧЕЛОВЕК АДМИН, ОН МУЖЧИНА! ОБЩАЙСЯ ПО-ПАЦАНСКИ, НИКАКИХ 'ПОДРУГ'! ===\n" if is_admin else ""
     
-    # Собираем полное имя (имя + ник) для передачи нейросети
     full_name = user_name
     if username:
         full_name += f" (@{username})"
@@ -100,7 +97,7 @@ def build_system_prompt(user_name: str, username: str, is_admin: bool, mood: str
 Сегодня {date_str}, {weekday}. Время: {time_str} по Москве.
 === ТВОЁ НАСТРОЕНИЕ СЕЙЧАС ===
 {mood_desc}
-=== ИМЯ И НИК ПОЛЬЗОВАТЕЛЯ ===
+=== ИМЯ И НИК АВТОРА (на кого ты отвечаешь) ===
 Сейчас с тобой говорит: {full_name}
 """
 
@@ -227,7 +224,7 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     user_text = update.message.text.strip()
     user_name = update.message.from_user.first_name
-    username = update.message.from_user.username # Берем никнейм
+    username = update.message.from_user.username
     chat_id = update.effective_chat.id
     user_id = update.message.from_user.id
     user_counter.add(chat_id)
@@ -255,7 +252,6 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     await update.message.chat.send_action(action="typing")
-    # Передаем и имя, и никнейм
     reply = ask_ai(user_text, user_name, username, chat_id, is_admin) 
     if reply:
         await update.message.reply_text(reply)
@@ -264,7 +260,7 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 # ==================== ЗАПУСК ====================
 def main():
-    print("🚀 Запуск Васи Пердюкова (Улучшенное определение пола)...")
+    print("🚀 Запуск Васи Пердюкова...")
     app = Application.builder().token(BOT_TOKEN).build()
     
     app.add_handler(CommandHandler("anekdot", anekdot_command))

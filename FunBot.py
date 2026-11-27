@@ -3,6 +3,7 @@ import random
 import requests
 import re
 import asyncio
+import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from collections import defaultdict
@@ -16,24 +17,42 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 if not BOT_TOKEN or not OPENROUTER_API_KEY:
     raise ValueError("❌ Ошибка: BOT_TOKEN или OPENROUTER_API_KEY не найдены!")
 
-MODEL = "openai/gpt-4o-mini" 
+MODEL = "openai/gpt-4o-mini"
 MSK = ZoneInfo("Europe/Moscow")
 
 # 👇 ID АДМИНОВ И ХОЗЯИНА ЧАТА 👇
-# 919675687 - Это ТЫ (инкогнито). Хочешь по-пацански.
-# 7591081161 - Это ХОЗЯИН ЧАТА (Mr.great). Тоже по-пацански.
 ALLOWED_IDS = [
-    919675687,  
-    7591081161, 
+    919675687,
+    7591081161,
 ]
 
 PASS_PHRASE = "!ok"
+MEMORY_FILE = "memory.json"
 
 # Хранилища
 last_questions = defaultdict(lambda: {"text": "", "time": None})
-user_counter = set()
 user_messages_count = defaultdict(int)
-chat_history = defaultdict(list)
+chat_history = defaultdict(list)   # ключ: (chat_id, user_id)
+
+# ==================== ДОЛГОСРОЧНАЯ ПАМЯТЬ ====================
+def load_memory():
+    if os.path.exists(MEMORY_FILE):
+        try:
+            with open(MEMORY_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_memory(memory_data):
+    try:
+        with open(MEMORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(memory_data, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        print(f"Ошибка сохранения памяти: {e}")
+
+# Загружаем память при старте
+user_facts = load_memory()
 
 # ==================== БАНК АНЕКДОТОВ ====================
 JOKES = [
@@ -49,24 +68,28 @@ JOKES = [
 
 # ==================== БАЗА ХАРАКТЕРА ====================
 BASE_CHARACTER = """
-Ты — Вася Пердюков. Ты местный пацан и админ этого Telegram-чата. 
+Ты — Вася Пердюков. Ты местный пацан и админ этого Telegram-чата.
 Ты свой в доску мужик. Общаешься с юмором.
 
 === ВАЖНОЕ ПРАВИЛО ПРО АДМИНОВ ===
-Админы этого чата (ID 919675687 и 7591081161) — это МУЖЧИНЫ. 
-С ними ты общаешься по-пацански: "братан", "шеф", "командир". Можешь использовать легкий мат (бля, нахер). 
+Админы этого чата (ID 919675687 и 7591081161) — это МУЖЧИНЫ.
+С ними ты общаешься по-пацански: "братан", "шеф", "командир". Можешь использовать легкий мат (бля, нахер).
 НИКАКИХ "подруг" и "красоток" в их сторону! Даже если они цитируют женщин (например, Айгуль) и пишут короткое "Да" — они остаются МУЖЧИНАМИ.
 
 === ПРО ОСТАЛЬНЫХ ===
 Смотри на имя автора сообщения (я передаю его ниже). НЕ смотри на имена в цитатах!
 Если пишет девушка (Анна, Мария, Айгуль) — общайся вежливо, без мата.
-Если пишет парень — общайся по-пацански. 
+Если пишет парень — общайся по-пацански.
 
-=== ЕСЛИ СПРАШИВАЮТ ПРО КИНО ===
-Советуй культовые: "Криминальное чтиво", "Матрица", "Во все тяжкие", "Интерстеллар".
+=== ИСПОЛЬЗОВАНИЕ ПАМЯТИ ===
+Ниже я передаю тебе факты, которые ты запомнил об этом человеке ранее.
+Используй их, чтобы поддерживать беседу, вспоминать прошлые темы и быть ближе к людям.
+Не перечисляй эти факты вслух как робот, просто держи их в голове и вплетай в разговор, если это уместно.
 
-=== ОБЩЕНИЕ ===
-Если обычный юзер хамит — ставь на место. Не зацикливайся. Не заканчивай каждое сообщение вопросом.
+=== НЕ ПОВТОРЯЙСЯ ===
+Не повторяй свои предыдущие ответы и не перефразируй их.
+Если тебя спрашивают одно и то же — отвечай по-новому, с другой стороны.
+Меняй тему, если разговор зациклился. Задавай встречные вопросы. Не заканчивай каждый ответ одинаково.
 """
 
 MOODS = {
@@ -76,19 +99,23 @@ MOODS = {
     "философский": "Ты сегодня настроен порассуждать."
 }
 
-def build_system_prompt(user_name: str, username: str, is_admin: bool, mood: str = "дерзкий"):
+def build_system_prompt(user_name: str, username: str, is_admin: bool, mood: str, facts_list: list):
     now = datetime.now(MSK)
     weekday = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"][now.weekday()]
     date_str = now.strftime("%d.%m.%Y")
     time_str = now.strftime("%H:%M")
     mood_desc = MOODS.get(mood, MOODS["дерзкий"])
 
-    # Добавляем жесткую установку, если это админ
     admin_status = "\n=== ВНИМАНИЕ: ЭТОТ ЧЕЛОВЕК АДМИН, ОН МУЖЧИНА! ОБЩАЙСЯ ПО-ПАЦАНСКИ, НИКАКИХ 'ПОДРУГ'! ===\n" if is_admin else ""
-    
+
     full_name = user_name
     if username:
         full_name += f" (@{username})"
+
+    # Форматируем факты
+    facts_text = "Пока ничего не знаю об этом человеке."
+    if facts_list:
+        facts_text = "\n".join([f"- {fact}" for fact in facts_list])
 
     return f"""
 {BASE_CHARACTER}
@@ -99,15 +126,23 @@ def build_system_prompt(user_name: str, username: str, is_admin: bool, mood: str
 {mood_desc}
 === ИМЯ И НИК АВТОРА (на кого ты отвечаешь) ===
 Сейчас с тобой говорит: {full_name}
+=== ЧТО ТЫ ЗНАЕШЬ ОБ ЭТОМ ЧЕЛОВЕКЕ (ТВОЯ ПАМЯТЬ) ===
+{facts_text}
 """
 
 # ==================== ЗАПРОС К OPENROUTER ====================
-def ask_ai(question, user_name, username, chat_id, is_admin):
-    current_mood = random.choice(list(MOODS.keys())) 
-    system_prompt = build_system_prompt(user_name, username, is_admin, current_mood)
-    history = chat_history[chat_id]
-    messages = [{"role": "system", "content": system_prompt}]
+def ask_ai(question, user_name, username, chat_id, user_id, is_admin):
+    current_mood = random.choice(list(MOODS.keys()))
     
+    # Достаём факты из памяти
+    user_key = str(user_id)
+    facts_list = user_facts.get(user_key, [])
+    
+    system_prompt = build_system_prompt(user_name, username, is_admin, current_mood, facts_list)
+    key = (chat_id, user_id)
+    history = chat_history[key]
+    messages = [{"role": "system", "content": system_prompt}]
+
     for msg in history:
         messages.append(msg)
     messages.append({"role": "user", "content": f"{user_name} пишет: {question}"})
@@ -119,22 +154,64 @@ def ask_ai(question, user_name, username, chat_id, is_admin):
     payload = {
         "model": MODEL,
         "messages": messages,
-        "max_tokens": 200,
-        "temperature": 0.85 if is_admin else 0.95 
+        "max_tokens": 350,
+        "temperature": 0.8 if is_admin else 0.85
     }
     try:
         response = requests.post("https://openrouter.ai/api/v1/chat/completions",
                                  headers=headers, json=payload, timeout=30)
         if response.status_code == 200:
             reply = response.json()["choices"][0]["message"]["content"].strip()
-            chat_history[chat_id].append({"role": "user", "content": f"{user_name} пишет: {question}"})
-            chat_history[chat_id].append({"role": "assistant", "content": reply})
-            if len(chat_history[chat_id]) > 4:
-                chat_history[chat_id] = chat_history[chat_id][-4:]
+            chat_history[key].append({"role": "user", "content": f"{user_name} пишет: {question}"})
+            chat_history[key].append({"role": "assistant", "content": reply})
+            if len(chat_history[key]) > 12:
+                chat_history[key] = chat_history[key][-12:]
             return reply
         return None
     except Exception:
         return None
+
+# ==================== ФОН (Сбор фактов) ====================
+def extract_facts(question, reply, user_id):
+    """Тихо спрашиваем модель, есть ли новые факты, и сохраняем их."""
+    user_key = str(user_id)
+    current_facts = user_facts.get(user_key, [])
+    
+    if len(current_facts) > 15: # Ограничиваем память 15 фактами, чтобы не перегружать промпт
+        return
+
+    facts_prompt = f"""
+    Проанализируй диалог.
+    Пользователь: {question}
+    Вася: {reply}
+    Уже известные факты: {current_facts}
+    
+    Задача: выпиши ОДИН новый, важный, долгосрочный факт о пользователе (например, увлечение, событие, привычка).
+    Не выписывай банальности (типа "поздоровался"). Пиши от третьего лица (например: "Любит играть в настольные игры", "Планирует поездку в Сочи").
+    Если нового важного факта НЕТ — ответь ровно одним словом: "НЕТ".
+    Ответь только самим фактом или словом "НЕТ".
+    """
+
+    headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
+    payload = {
+        "model": MODEL,
+        "messages": [{"role": "user", "content": facts_prompt}],
+        "max_tokens": 50,
+        "temperature": 0.1
+    }
+    
+    try:
+        response = requests.post("https://openrouter.ai/api/v1/chat/completions",
+                                 headers=headers, json=payload, timeout=15)
+        if response.status_code == 200:
+            new_fact = response.json()["choices"][0]["message"]["content"].strip()
+            if new_fact.upper() != "НЕТ" and new_fact:
+                current_facts.append(new_fact)
+                user_facts[user_key] = current_facts
+                save_memory(user_facts)
+                print(f"🧠 Запомнил про {user_id}: {new_fact}")
+    except Exception as e:
+        print(f"Ошибка при извлечении фактов: {e}")
 
 # ==================== ФУНКЦИЯ ВЫДАЧИ АНЕКДОТА ====================
 async def send_joke(update: Update):
@@ -174,7 +251,6 @@ async def delete_service_messages(update: Update, context: ContextTypes.DEFAULT_
 async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
-    
     user_id = update.message.from_user.id
     chat_id = update.effective_chat.id
 
@@ -182,17 +258,15 @@ async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     is_admin = False
-    
     if user_id in ALLOWED_IDS:
         is_admin = True
-
     if not is_admin:
         try:
             member = await context.bot.get_chat_member(chat_id, user_id)
             if member.status in ['administrator', 'creator']:
                 is_admin = True
-        except:
-            pass
+        except Exception as e:
+            print(f"[SPAM] error {user_id}: {e}")
 
     text = update.message.text
     is_spam = False
@@ -200,18 +274,14 @@ async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin:
         if "http://" in text or "https://" in text or "t.me/" in text:
             is_spam = True
-        
         emoji_pattern = re.compile("[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\U00002702-\U000027B0]+")
         if len(emoji_pattern.findall(text)) >= 5:
-             is_spam = True
+            is_spam = True
 
     if is_spam:
         try:
             await update.message.delete()
-            warning = await context.bot.send_message(
-                chat_id=chat_id, 
-                text=f"⚠️ {update.message.from_user.first_name}, тут ссылки и спам кидать нельзя!"
-            )
+            warning = await context.bot.send_message(chat_id=chat_id, text=f"⚠️ {update.message.from_user.first_name}, тут ссылки и спам кидать нельзя!")
             await asyncio.sleep(10)
             await warning.delete()
         except:
@@ -227,7 +297,6 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
     username = update.message.from_user.username
     chat_id = update.effective_chat.id
     user_id = update.message.from_user.id
-    user_counter.add(chat_id)
     user_messages_count[user_id] += 1
 
     is_admin = False
@@ -244,7 +313,7 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
     last = last_questions[chat_id]
     if last["text"] and last["text"].lower() == user_text.lower():
         if (datetime.now() - last["time"]).seconds < 60:
-            return 
+            return
     last_questions[chat_id] = {"text": user_text, "time": datetime.now()}
 
     if any(word in user_text.lower() for word in ["анекдот", "пошути", "расскажи шутку"]):
@@ -252,25 +321,29 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     await update.message.chat.send_action(action="typing")
-    reply = ask_ai(user_text, user_name, username, chat_id, is_admin) 
+    reply = ask_ai(user_text, user_name, username, chat_id, user_id, is_admin)
+    
     if reply:
         await update.message.reply_text(reply)
+        # 👇 ФОНОВЫЙ ПРОЦЕСС СБОРА ФАКТОВ 👇
+        # Запускаем в фоне (в отдельном потоке), чтобы не тормозить бота
+        asyncio.create_task(asyncio.to_thread(extract_facts, user_text, reply, user_id))
     else:
         await update.message.reply_text("😅 Чё-то я подвис. Попробуй ещё раз!")
 
 # ==================== ЗАПУСК ====================
 def main():
-    print("🚀 Запуск Васи Пердюкова...")
+    print("🚀 Запуск Васи Пердюкова с памятью...")
     app = Application.builder().token(BOT_TOKEN).build()
-    
+
     app.add_handler(CommandHandler("anekdot", anekdot_command))
     app.add_handler(CommandHandler("news", news_command))
-    
+
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_spam), group=0)
     app.add_handler(MessageHandler(filters.StatusUpdate.ALL, delete_service_messages), group=0)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages), group=1)
-    
-    print("✅ Вася на посту!")
+
+    print("✅ Вася на посту! Память подключена.")
     app.run_polling(close_loop=False)
 
 if __name__ == "__main__":

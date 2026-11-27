@@ -4,6 +4,8 @@ import requests
 import re
 import asyncio
 import json
+import base64
+from io import BytesIO
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from collections import defaultdict
@@ -17,22 +19,22 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 if not BOT_TOKEN or not OPENROUTER_API_KEY:
     raise ValueError("❌ Ошибка: BOT_TOKEN или OPENROUTER_API_KEY не найдены!")
 
-MODEL = "openai/gpt-4o-mini"
+MODEL = "openai/gpt-4o-mini" 
+# 👇 ОБНОВЛЕННАЯ МОДЕЛЬ ДЛЯ РИСОВАНИЯ 👇
+IMAGE_MODEL = "google/gemini-3.1-flash-image"
 MSK = ZoneInfo("Europe/Moscow")
 
-# 👇 ID АДМИНОВ И ХОЗЯИНА ЧАТА 👇
 ALLOWED_IDS = [
-    919675687,
-    7591081161,
+    919675687,  
+    7591081161, 
 ]
 
 PASS_PHRASE = "!ok"
 MEMORY_FILE = "memory.json"
 
-# Хранилища
 last_questions = defaultdict(lambda: {"text": "", "time": None})
 user_messages_count = defaultdict(int)
-chat_history = defaultdict(list)   # ключ: (chat_id, user_id)
+chat_history = defaultdict(list)
 
 # ==================== ДОЛГОСРОЧНАЯ ПАМЯТЬ ====================
 def load_memory():
@@ -51,7 +53,6 @@ def save_memory(memory_data):
     except Exception as e:
         print(f"Ошибка сохранения памяти: {e}")
 
-# Загружаем память при старте
 user_facts = load_memory()
 
 # ==================== БАНК АНЕКДОТОВ ====================
@@ -112,7 +113,6 @@ def build_system_prompt(user_name: str, username: str, is_admin: bool, mood: str
     if username:
         full_name += f" (@{username})"
 
-    # Форматируем факты
     facts_text = "Пока ничего не знаю об этом человеке."
     if facts_list:
         facts_text = "\n".join([f"- {fact}" for fact in facts_list])
@@ -130,14 +130,11 @@ def build_system_prompt(user_name: str, username: str, is_admin: bool, mood: str
 {facts_text}
 """
 
-# ==================== ЗАПРОС К OPENROUTER ====================
+# ==================== ЗАПРОС К OPENROUTER (ТЕКСТ) ====================
 def ask_ai(question, user_name, username, chat_id, user_id, is_admin):
     current_mood = random.choice(list(MOODS.keys()))
-    
-    # Достаём факты из памяти
     user_key = str(user_id)
     facts_list = user_facts.get(user_key, [])
-    
     system_prompt = build_system_prompt(user_name, username, is_admin, current_mood, facts_list)
     key = (chat_id, user_id)
     history = chat_history[key]
@@ -171,13 +168,62 @@ def ask_ai(question, user_name, username, chat_id, user_id, is_admin):
     except Exception:
         return None
 
+# ==================== ГЕНЕРАЦИЯ КАРТИНКИ ====================
+def generate_image(prompt: str):
+    """Отправляет запрос в OpenRouter для генерации картинки. Возвращает bytes или None."""
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": IMAGE_MODEL,
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        "modalities": ["image"],  # Говорим, что хотим картинку
+    }
+    
+    try:
+        response = requests.post("https://openrouter.ai/api/v1/chat/completions",
+                                 headers=headers, json=payload, timeout=60)
+        
+        if response.status_code == 200:
+            data = response.json()
+            message = data["choices"][0]["message"]
+            
+            # 1. Пытаемся найти картинку в поле images (стандартный путь)
+            if "images" in message and message["images"]:
+                image_url = message["images"][0]["image_url"]["url"]
+                if "," in image_url:
+                    base64_str = image_url.split(",")[1]
+                else:
+                    base64_str = image_url
+                return base64.b64decode(base64_str)
+            
+            # 2. Если в images пусто, проверяем content (некоторые модели шлют data URL туда)
+            content = message.get("content", "")
+            if isinstance(content, str) and content.startswith("data:image"):
+                if "," in content:
+                    base64_str = content.split(",")[1]
+                else:
+                    base64_str = content
+                return base64.b64decode(base64_str)
+            
+            print("В ответе нет images и content не является картинкой")
+            return None
+        else:
+            print(f"Ошибка API генерации: {response.status_code} - {response.text[:200]}")
+            return None
+    except Exception as e:
+        print(f"Ошибка при генерации картинки: {e}")
+        return None
+
 # ==================== ФОН (Сбор фактов) ====================
 def extract_facts(question, reply, user_id):
-    """Тихо спрашиваем модель, есть ли новые факты, и сохраняем их."""
     user_key = str(user_id)
     current_facts = user_facts.get(user_key, [])
     
-    if len(current_facts) > 15: # Ограничиваем память 15 фактами, чтобы не перегружать промпт
+    if len(current_facts) > 15:
         return
 
     facts_prompt = f"""
@@ -249,6 +295,10 @@ async def delete_service_messages(update: Update, context: ContextTypes.DEFAULT_
 
 # ==================== УМНЫЙ АНТИСПАМ ====================
 async def check_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # 👇 ВАЖНО: Не трогаем сообщения самого бота (картинки)
+    if update.message.from_user.id == context.bot.id:
+        return
+
     if not update.message or not update.message.text:
         return
     user_id = update.message.from_user.id
@@ -320,20 +370,48 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
         await send_joke(update)
         return
 
+    # 👇 ПРОВЕРКА НА ГЕНЕРАЦИЮ КАРТИНКИ 👇
+    draw_keywords = ["нарисуй", "сделай картинку", "сгенерируй", "нарисуй картинку", "покажи картинку"]
+    text_lower = user_text.lower()
+    
+    if any(kw in text_lower for kw in draw_keywords):
+        # Вырезаем промпт: берём всё после ключевого слова
+        prompt = user_text
+        for kw in draw_keywords:
+            if kw in text_lower:
+                idx = text_lower.find(kw) + len(kw)
+                prompt = user_text[idx:].strip(" ,.!?:;")
+                break
+        
+        if not prompt:
+            await update.message.reply_text("А что рисовать-то? Напиши: «Вася, нарисуй кота в космосе»")
+            return
+        
+        await update.message.reply_text("🎨 Ща накалякаю...")
+        await update.message.chat.send_action(action="upload_photo")
+        
+        # Генерируем в фоне (чтобы не вешать бота)
+        image_bytes = await asyncio.to_thread(generate_image, prompt)
+        
+        if image_bytes:
+            await update.message.reply_photo(photo=BytesIO(image_bytes), caption=f"Держи: {prompt}")
+        else:
+            await update.message.reply_text("😅 Чё-то кисть засохла. Попробуй ещё раз или переформулируй.")
+        return
+
+    # Обычный текстовый ответ
     await update.message.chat.send_action(action="typing")
     reply = ask_ai(user_text, user_name, username, chat_id, user_id, is_admin)
     
     if reply:
         await update.message.reply_text(reply)
-        # 👇 ФОНОВЫЙ ПРОЦЕСС СБОРА ФАКТОВ 👇
-        # Запускаем в фоне (в отдельном потоке), чтобы не тормозить бота
         asyncio.create_task(asyncio.to_thread(extract_facts, user_text, reply, user_id))
     else:
         await update.message.reply_text("😅 Чё-то я подвис. Попробуй ещё раз!")
 
 # ==================== ЗАПУСК ====================
 def main():
-    print("🚀 Запуск Васи Пердюкова с памятью...")
+    print("🚀 Запуск Васи Пердюкова с рисовалкой...")
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("anekdot", anekdot_command))
@@ -343,7 +421,7 @@ def main():
     app.add_handler(MessageHandler(filters.StatusUpdate.ALL, delete_service_messages), group=0)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages), group=1)
 
-    print("✅ Вася на посту! Память подключена.")
+    print("✅ Вася на посту! Теперь с кисточкой.")
     app.run_polling(close_loop=False)
 
 if __name__ == "__main__":

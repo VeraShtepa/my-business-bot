@@ -20,7 +20,7 @@ if not BOT_TOKEN or not OPENROUTER_API_KEY:
     raise ValueError("❌ Ошибка: BOT_TOKEN или OPENROUTER_API_KEY не найдены!")
 
 MODEL = "openai/gpt-4o-mini" 
-# 👇 ОБНОВЛЕННАЯ МОДЕЛЬ ДЛЯ РИСОВАНИЯ 👇
+# Модель для рисования (через новый Image API)
 IMAGE_MODEL = "google/gemini-3.1-flash-image"
 MSK = ZoneInfo("Europe/Moscow")
 
@@ -168,51 +168,37 @@ def ask_ai(question, user_name, username, chat_id, user_id, is_admin):
     except Exception:
         return None
 
-# ==================== ГЕНЕРАЦИЯ КАРТИНКИ ====================
+# ==================== ГЕНЕРАЦИЯ КАРТИНКИ (НОВЫЙ API) ====================
 def generate_image(prompt: str):
-    """Отправляет запрос в OpenRouter для генерации картинки. Возвращает bytes или None."""
+    """Отправляет запрос в новый Image API OpenRouter. Возвращает bytes или None."""
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json"
     }
     payload = {
         "model": IMAGE_MODEL,
-        "messages": [
-            {"role": "user", "content": prompt}
-        ],
-        "modalities": ["image"],  # Говорим, что хотим картинку
+        "prompt": prompt
     }
     
     try:
-        response = requests.post("https://openrouter.ai/api/v1/chat/completions",
+        response = requests.post("https://openrouter.ai/api/v1/images",
                                  headers=headers, json=payload, timeout=60)
         
         if response.status_code == 200:
             data = response.json()
-            message = data["choices"][0]["message"]
+            # В новом API картинка приходит в поле data
+            if "data" in data and data["data"]:
+                image_data = data["data"][0]
+                if "b64_json" in image_data:
+                    return base64.b64decode(image_data["b64_json"])
+                elif "url" in image_data:
+                    img_resp = requests.get(image_data["url"], timeout=30)
+                    return img_resp.content
             
-            # 1. Пытаемся найти картинку в поле images (стандартный путь)
-            if "images" in message and message["images"]:
-                image_url = message["images"][0]["image_url"]["url"]
-                if "," in image_url:
-                    base64_str = image_url.split(",")[1]
-                else:
-                    base64_str = image_url
-                return base64.b64decode(base64_str)
-            
-            # 2. Если в images пусто, проверяем content (некоторые модели шлют data URL туда)
-            content = message.get("content", "")
-            if isinstance(content, str) and content.startswith("data:image"):
-                if "," in content:
-                    base64_str = content.split(",")[1]
-                else:
-                    base64_str = content
-                return base64.b64decode(base64_str)
-            
-            print("В ответе нет images и content не является картинкой")
+            print("В ответе Image API нет данных картинки")
             return None
         else:
-            print(f"Ошибка API генерации: {response.status_code} - {response.text[:200]}")
+            print(f"Ошибка Image API: {response.status_code} - {response.text[:300]}")
             return None
     except Exception as e:
         print(f"Ошибка при генерации картинки: {e}")
@@ -382,6 +368,11 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
                 idx = text_lower.find(kw) + len(kw)
                 prompt = user_text[idx:].strip(" ,.!?:;")
                 break
+        
+        # Если после ключевого слова ничего нет (например, просто "нарисуй"), 
+        # попробуем взять текст из цитируемого сообщения (если это ответ на сообщение)
+        if not prompt and update.message.reply_to_message:
+            prompt = update.message.reply_to_message.text or ""
         
         if not prompt:
             await update.message.reply_text("А что рисовать-то? Напиши: «Вася, нарисуй кота в космосе»")

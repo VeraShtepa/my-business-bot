@@ -20,7 +20,7 @@ if not BOT_TOKEN or not OPENROUTER_API_KEY:
     raise ValueError("❌ Ошибка: BOT_TOKEN или OPENROUTER_API_KEY не найдены!")
 
 MODEL = "openai/gpt-4o-mini" 
-# Модель для рисования (через новый Image API)
+# Модель для рисования
 IMAGE_MODEL = "google/gemini-3.1-flash-image"
 MSK = ZoneInfo("Europe/Moscow")
 
@@ -168,25 +168,30 @@ def ask_ai(question, user_name, username, chat_id, user_id, is_admin):
     except Exception:
         return None
 
-# ==================== ГЕНЕРАЦИЯ КАРТИНКИ (НОВЫЙ API) ====================
+# ==================== ГЕНЕРАЦИЯ КАРТИНКИ (УЛУЧШЕННАЯ) ====================
 def generate_image(prompt: str):
-    """Отправляет запрос в новый Image API OpenRouter. Возвращает bytes или None."""
+    """Отправляет запрос в новый Image API OpenRouter с усиленным промптом."""
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json"
     }
+    
+    # Добавляем стилистические теги, чтобы нейросеть лучше понимала, 
+    # что мы хотим картинку, и меньше зацикливалась на абстракциях
+    enhanced_prompt = f"{prompt}. High quality, detailed, beautiful illustration, 8k resolution."
+    
     payload = {
         "model": IMAGE_MODEL,
-        "prompt": prompt
+        "prompt": enhanced_prompt
     }
     
     try:
+        print(f"[IMAGE] Запрос к API: {enhanced_prompt}")
         response = requests.post("https://openrouter.ai/api/v1/images",
                                  headers=headers, json=payload, timeout=60)
         
         if response.status_code == 200:
             data = response.json()
-            # В новом API картинка приходит в поле data
             if "data" in data and data["data"]:
                 image_data = data["data"][0]
                 if "b64_json" in image_data:
@@ -195,13 +200,13 @@ def generate_image(prompt: str):
                     img_resp = requests.get(image_data["url"], timeout=30)
                     return img_resp.content
             
-            print("В ответе Image API нет данных картинки")
+            print(f"[IMAGE] В ответе нет картинки: {data}")
             return None
         else:
-            print(f"Ошибка Image API: {response.status_code} - {response.text[:300]}")
+            print(f"[IMAGE] Ошибка API {response.status_code}: {response.text[:300]}")
             return None
     except Exception as e:
-        print(f"Ошибка при генерации картинки: {e}")
+        print(f"[IMAGE] Ошибка при генерации: {e}")
         return None
 
 # ==================== ФОН (Сбор фактов) ====================
